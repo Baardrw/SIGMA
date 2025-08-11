@@ -3,6 +3,7 @@
 #include <cuda_runtime.h>
 #include <vector_types.h>
 
+
 #define EPSILON 1e-6
 
 typedef float real_t;
