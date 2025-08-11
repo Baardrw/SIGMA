@@ -1,0 +1,14 @@
+CompileFlags:
+  Add:
+    - --cuda-path=/usr/local/cuda-12.8
+    - -I/shared/src/SIGMA/include
+    - -xcuda
+    - -std=c++17
+    - --cuda-gpu-arch=sm_90
+  Remove:
+    - -forward-unknown-to-host-compiler
+    - --generate-code*
+    - --expt-extended-lambda
+    - --expt-relaxed-constexpr
+Index:
+  Background: Build

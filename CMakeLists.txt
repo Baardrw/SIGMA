@@ -7,6 +7,9 @@ project(SIGMA VERSION 1.0.0 LANGUAGES CXX CUDA)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Export compile commands
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # Set CUDA standard
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
@@ -30,95 +33,101 @@ include_directories(
     ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
 )
 
-# Source files
-set(SIGMA_SOURCES
-    src/main.cpp
-    src/muon_segment.cu
+# ===== SIGMA LIBRARY =====
+# Library source files (everything except main)
+set(SIGMA_LIB_SOURCES
+    src/lib/muon_segment.cu
+    src/lib/data_manager.cpp
+    src/lib/residual_math.cu
 )
 
-# Header files
-set(SIGMA_HEADERS
-    include/muon_segment.cuh
+# Library header files
+set(SIGMA_LIB_HEADERS
+    include/config.h
+    include/muon_segment.h
+    include/residual_math.h
+    include/data_structures.h
+    include/data_manager.h
 )
 
-# Create main executable
-add_executable(sigma ${SIGMA_SOURCES} ${SIGMA_HEADERS})
+# Create the reusable library
+add_library(sigma_lib STATIC ${SIGMA_LIB_SOURCES} ${SIGMA_LIB_HEADERS})
 
-# Set properties for CUDA compilation
-set_target_properties(sigma PROPERTIES
-    CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
-    CUDA_RUNTIME_LIBRARY SHARED
-)
-
-# Link libraries
-target_link_libraries(sigma
-    ${CUDA_LIBRARIES}
-    Threads::Threads
-    # ${ROOT_LIBRARIES}
-    # ${Boost_LIBRARIES}
-)
-
-# Optional: Create a library for reusable components
-add_library(sigma_lib STATIC
-    src/muon_segment.cpp
-    src/gpu_kernels.cu
-    src/data_manager.cpp
-)
-
+# Set CUDA properties for library
 set_target_properties(sigma_lib PROPERTIES
     CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
     CUDA_RUNTIME_LIBRARY SHARED
 )
 
+# Library dependencies
 target_link_libraries(sigma_lib
     ${CUDA_LIBRARIES}
 )
 
-# Optional: Build tests
-option(BUILD_TESTS "Build test programs" ON)
-if(BUILD_TESTS)
-    enable_testing()
-    
-    # Find Google Test (optional)
-    # find_package(GTest REQUIRED)
-    
-    add_executable(sigma_tests
-        tests/test_main.cpp
-        tests/test_muon_segment.cpp
-        tests/test_gpu_kernels.cu
-    )
-    
-    target_link_libraries(sigma_tests
-        sigma_lib
-        # ${GTEST_LIBRARIES}
-        Threads::Threads
-    )
-    
-    # Add test
-    add_test(NAME SigmaTests COMMAND sigma_tests)
-endif()
+# Make headers available to library consumers
+target_include_directories(sigma_lib PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
 
-# Optional: Build benchmarks
-option(BUILD_BENCHMARKS "Build benchmark programs" OFF)
-if(BUILD_BENCHMARKS)
-    add_executable(sigma_benchmark
-        benchmarks/benchmark_main.cpp
-        benchmarks/segment_formation_benchmark.cu
-    )
-    
-    target_link_libraries(sigma_benchmark
-        sigma_lib
-    )
-endif()
+# ===== MAIN EXECUTABLE =====
+# Main executable source (only main.cpp)
+set(SIGMA_MAIN_SOURCES
+    src/main.cpp
+)
 
-# Install targets
+# Create main executable
+add_executable(sigma ${SIGMA_MAIN_SOURCES})
+
+# Link the main executable against the library
+target_link_libraries(sigma
+    sigma_lib                 # Our library comes first
+    Threads::Threads
+)
+
+# ===== OPTIONAL TESTS =====
+# Uncomment when tests are created
+
+# option(BUILD_TESTS "Build test programs" ON)
+# if(BUILD_TESTS)
+#     enable_testing()
+    
+#     add_executable(sigma_tests
+#         tests/test_main.cpp
+#         tests/test_muon_segment.cpp
+#         tests/test_gpu_kernels.cu
+#     )
+    
+#     # Tests link against the library, not the main executable
+#     target_link_libraries(sigma_tests
+#         sigma_lib             # Use the library
+#         Threads::Threads
+#     )
+    
+#     add_test(NAME SigmaTests COMMAND sigma_tests)
+# endif()
+
+# # ===== OPTIONAL BENCHMARKS =====
+# option(BUILD_BENCHMARKS "Build benchmark programs" OFF)
+# if(BUILD_BENCHMARKS)
+#     add_executable(sigma_benchmark
+#         benchmarks/benchmark_main.cpp
+#         benchmarks/segment_formation_benchmark.cu
+#     )
+    
+#     # Benchmarks also link against the library
+#     target_link_libraries(sigma_benchmark
+#         sigma_lib
+#     )
+# endif()
+
+# ===== INSTALLATION =====
 install(TARGETS sigma sigma_lib
     RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
 )
 
-install(FILES ${SIGMA_HEADERS}
+install(FILES ${SIGMA_LIB_HEADERS}
     DESTINATION include/sigma
 )
 
