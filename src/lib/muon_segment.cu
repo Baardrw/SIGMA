@@ -109,8 +109,6 @@ __global__ void seed_lines(struct Data *data, int num_buckets) {
   // Residuals are only valid for thread id 0
 
   if (tid == 0) {
-    printf("Thread %d: chi2_arr = [%f, %f, %f, %f]\n", tid, chi2_arr[0],
-           chi2_arr[1], chi2_arr[2], chi2_arr[3]);
     // Store the best line parameters
     real_t min_residual = chi2_arr[0];
     int best_index = 0;
