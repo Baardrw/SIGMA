@@ -1,3 +1,6 @@
+#pragma once
+#include <Eigen/Dense>
+
 #include "config.h"
 
 // Accessors
@@ -24,12 +27,20 @@ struct Data {
   real_t *to_next_d_z;
 
   real_t *drift_radius;
+  real_t *sigma;  // Dirft radius uncertainty
+
   real_t *time;
   int *buckets; // bucket[bucket_index * 2] -> start of mdt data
                 // bucket[bucket_index * 2 + 1] -> start of rpc data
                 // There is a last imaginary bucket such that the end bucket
                 // knows where to end The end bucket is alwayds one adress
                 // beyond the last real bucket
+
+  // Seeds:
+  real_t *seed_x0;
+  real_t *seed_y0;
+  real_t *seed_phi;
+  real_t *seed_theta;
 };
 
 enum {
@@ -52,14 +63,14 @@ enum {
 typedef struct line {
   real_t params[4]; // theta, phi, x0, y0
 
-  real3_t D;
-  real3_t dD[2];
-  real3_t ddD[3]; // theta theta, phi phi, theta phi
+  Vector3 D;
+  Vector3 dD[2];
+  Vector3 ddD[3]; // theta theta, phi phi, theta phi
 
-  real3_t S0;
-  real3_t dS0[2] = {{1, 0, 0}, {0, 1, 0}}; // x0, y0
+  Vector3 S0;
+  Vector3 dS0[2] = {{1, 0, 0}, {0, 1, 0}}; // x0, y0
 
-  real3_t Dortho;
-  real3_t dDortho[2];  // theta, phi
-  real3_t ddDortho[3]; // theta theta, phi phi, theta phi
+  Vector3 Dortho;
+  Vector3 dDortho[2];  // theta, phi
+  Vector3 ddDortho[3]; // theta theta, phi phi, theta phi
 } line_t;

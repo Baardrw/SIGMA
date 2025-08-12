@@ -20,10 +20,12 @@ set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
 # Find required packages
 find_package(CUDA REQUIRED)
 find_package(Threads REQUIRED)
+find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 
 # Set compiler flags
+# Set compiler flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -O3")
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3")
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3 --expt-relaxed-constexpr -diag-suppress=20015 -diag-suppress=20012")
 
 set(CMAKE_CUDA_ARCHITECTURES 90)
 
@@ -37,8 +39,8 @@ include_directories(
 # Library source files (everything except main)
 set(SIGMA_LIB_SOURCES
     src/lib/muon_segment.cu
-    src/lib/data_manager.cpp
     src/lib/residual_math.cu
+    src/lib/line_math.cu
 )
 
 # Library header files
@@ -47,7 +49,7 @@ set(SIGMA_LIB_HEADERS
     include/muon_segment.h
     include/residual_math.h
     include/data_structures.h
-    include/data_manager.h
+    include/line_math.h
 )
 
 # Create the reusable library
@@ -62,6 +64,7 @@ set_target_properties(sigma_lib PROPERTIES
 # Library dependencies
 target_link_libraries(sigma_lib
     ${CUDA_LIBRARIES}
+    Eigen3::Eigen
 )
 
 # Make headers available to library consumers
@@ -80,31 +83,38 @@ add_executable(sigma ${SIGMA_MAIN_SOURCES})
 
 # Link the main executable against the library
 target_link_libraries(sigma
-    sigma_lib                 # Our library comes first
+    sigma_lib                 
     Threads::Threads
+    Eigen3::Eigen
+    ${CUDA_LIBRARIES}         # CUDA libraries
 )
 
-# ===== OPTIONAL TESTS =====
-# Uncomment when tests are created
+# ===== TESTS =====
 
-# option(BUILD_TESTS "Build test programs" ON)
-# if(BUILD_TESTS)
-#     enable_testing()
+option(BUILD_TESTS "Build test programs" ON)
+if(BUILD_TESTS)
+    enable_testing()
     
-#     add_executable(sigma_tests
-#         tests/test_main.cpp
-#         tests/test_muon_segment.cpp
-#         tests/test_gpu_kernels.cu
-#     )
+    add_executable(sigma_tests
+        tests/test_gpu_kernels.cu
+    )
     
-#     # Tests link against the library, not the main executable
-#     target_link_libraries(sigma_tests
-#         sigma_lib             # Use the library
-#         Threads::Threads
-#     )
+    # Tests link against the library, not the main executable
+    target_link_libraries(sigma_tests
+        sigma_lib             # Use the library
+        Threads::Threads
+        Eigen3::Eigen
+    )
     
-#     add_test(NAME SigmaTests COMMAND sigma_tests)
-# endif()
+    # Set CUDA properties for tests
+    set_target_properties(sigma_tests PROPERTIES
+        CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
+        CUDA_RESOLVE_DEVICE_SYMBOLS ON
+    )
+    
+    add_test(NAME SigmaTests COMMAND sigma_tests)
+endif()
+
 
 # # ===== OPTIONAL BENCHMARKS =====
 # option(BUILD_BENCHMARKS "Build benchmark programs" OFF)
