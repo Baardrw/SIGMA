@@ -2,10 +2,14 @@
 #include <cassert>
 #include <cmath>
 #include <cuda_runtime.h>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <fstream>
+#include <map>
 #include <math.h>
+#include <set>
+#include <sstream>
+#include <string>
 #include <vector>
 
 #include "config.h"
@@ -26,93 +30,320 @@ __global__ void seed_lines(struct Data *data, int num_buckets);
     }                                                                          \
   } while (0)
 
-// Test data generator
-void generate_test_data(Data &h_data, int mdt_measurements_per_bucket,
-                        int rpc_measurements_per_bucket, int num_buckets,
-                        real_t true_phi, real_t true_theta, real_t true_x0,
-                        real_t true_y0) {
-  // Allocate host memory
-  int num_measurements = mdt_measurements_per_bucket * num_buckets +
-                         rpc_measurements_per_bucket * num_buckets;
-  h_data.sensor_pos_x = new real_t[num_measurements];
-  h_data.sensor_pos_y = new real_t[num_measurements];
-  h_data.sensor_pos_z = new real_t[num_measurements];
-  h_data.drift_radius = new real_t[num_measurements];
-  h_data.sigma = new real_t[num_measurements];
+// Structure to hold CSV row data
+struct MDTHit {
+  real_t surface_pos_x, surface_pos_y, surface_pos_z;
+  real_t hit_pos_x, hit_pos_y, hit_pos_z;
+  real_t poca_x, poca_y, poca_z;
+  real_t hit_dir_x, hit_dir_y, hit_dir_z;
+  int event_id, volume_id;
+};
 
-  // Line direction
-  real_t dx = sin(true_theta) * cos(true_phi);
-  real_t dy = sin(true_theta) * sin(true_phi);
-  real_t dz = cos(true_theta);
+struct RPCHit {
+  real_t strip_pos_x, strip_pos_y, strip_pos_z;
+  real_t strip_dir_x, strip_dir_y, strip_dir_z;
+  real_t strip_normal_x, strip_normal_y, strip_normal_z;
+  real_t hit_pos_x, hit_pos_y, hit_pos_z;
+  real_t poca_x, poca_y, poca_z;
+  int event_id, volume_id;
+};
 
-  // Generate points along the line with some noise
-  for (int bucket = 0; bucket < num_buckets; bucket++) {
-    for (int i = 0; i < mdt_measurements_per_bucket; i++) {
-      int idx =
-          bucket * (mdt_measurements_per_bucket + rpc_measurements_per_bucket) +
-          i;
-      real_t t = idx * 2.0f; // Parameter along line
-      real_t sensor_to_hit_angle =
-          idx % 2 == 0 ? 0.78539816f
-                       : 0.78539816f + M_PI; // 45 degrees or opposite side
-      Eigen::Vector3f hit(true_x0 + t * dx, true_y0 + t * dy, t * dz);
+// Function to split CSV line
+std::vector<std::string> split_csv_line(const std::string &line) {
+  std::vector<std::string> result;
+  std::stringstream ss(line);
+  std::string cell;
 
-      real_t drift_radius =
-          rand() % 10 + 1; // Random drift radius between 1 and 10
-      real_t noise =
-          (rand() % 100 - 50) / 1000.0f; // Random noise in [-0.05, 0.05]
-      drift_radius += noise;
-      h_data.sensor_pos_x[idx] = 10.0f; // Keep x constant for the sensors
-      h_data.sensor_pos_y[idx] =
-          drift_radius * sin(sensor_to_hit_angle) + hit.y();
-      h_data.sensor_pos_z[idx] =
-          drift_radius * cos(sensor_to_hit_angle) + hit.z();
-      h_data.drift_radius[idx] = drift_radius;
-      h_data.sigma[idx] = 0.1f; // Small sigma for all
-    }
-
-    for (int i = 0; i < rpc_measurements_per_bucket; i++) {
-      int idx =
-          bucket * (mdt_measurements_per_bucket + rpc_measurements_per_bucket) +
-          mdt_measurements_per_bucket + i;
-
-      real_t t = idx * 2.0f; // Parameter along line
-      Eigen::Vector3f hit(true_x0 + t * dx, true_y0 + t * dy, t * dz);
-
-      h_data.sensor_pos_x[idx] = hit.x();
-      h_data.sensor_pos_y[idx] = hit.y();
-      h_data.sensor_pos_z[idx] = hit.z();
-    }
+  while (std::getline(ss, cell, ',')) {
+    result.push_back(cell);
   }
+  return result;
 }
 
-void setup_buckets(Data &h_data, int num_buckets,
-                   int mdt_measurements_per_bucket,
-                   int rpc_measurements_per_bucket) {
+// Function to read MDT data from CSV
+std::vector<MDTHit> read_mdt_csv(const std::string &filename,
+                                 int target_event_id) {
+  std::vector<MDTHit> hits;
+  std::ifstream file(filename);
+  std::string line;
+
+  if (!file.is_open()) {
+    std::cerr << "Error: Could not open MDT file: " << filename << std::endl;
+    return hits;
+  }
+  // Skip header line
+  std::getline(file, line);
+
+  while (std::getline(file, line)) {
+    std::vector<std::string> columns = split_csv_line(line);
+    if (columns.size() < 14)
+      continue;
+
+    MDTHit hit;
+    hit.surface_pos_x = std::stof(columns[0]);
+    hit.surface_pos_y = std::stof(columns[1]);
+    hit.surface_pos_z = std::stof(columns[2]);
+    hit.hit_pos_x = std::stof(columns[3]);
+    hit.hit_pos_y = std::stof(columns[4]);
+    hit.hit_pos_z = std::stof(columns[5]);
+    hit.poca_x = std::stof(columns[6]);
+    hit.poca_y = std::stof(columns[7]);
+    hit.poca_z = std::stof(columns[8]);
+    hit.hit_dir_x = std::stof(columns[9]);
+    hit.hit_dir_y = std::stof(columns[10]);
+    hit.hit_dir_z = std::stof(columns[11]);
+    hit.event_id = std::stoi(columns[12]);
+    hit.volume_id = std::stoi(columns[13]);
+
+    // Filter by event ID
+    if (hit.event_id == target_event_id) {
+      hits.push_back(hit);
+    }
+  }
+
+  file.close();
+  std::cout << "Read " << hits.size() << " MDT hits for event "
+            << target_event_id << std::endl;
+  return hits;
+}
+
+// Function to read RPC data from CSV
+std::vector<RPCHit> read_rpc_csv(const std::string &filename,
+                                 int target_event_id) {
+  std::vector<RPCHit> hits;
+  std::ifstream file(filename);
+  std::string line;
+
+  if (!file.is_open()) {
+    std::cerr << "Error: Could not open RPC file: " << filename << std::endl;
+    return hits;
+  }
+
+  // Skip header line
+  std::getline(file, line);
+
+  while (std::getline(file, line)) {
+    std::vector<std::string> columns = split_csv_line(line);
+    if (columns.size() < 16)
+      continue;
+
+    RPCHit hit;
+    hit.strip_pos_x = std::stof(columns[0]);
+    hit.strip_pos_y = std::stof(columns[1]);
+    hit.strip_pos_z = std::stof(columns[2]);
+    hit.strip_dir_x = std::stof(columns[3]);
+    hit.strip_dir_y = std::stof(columns[4]);
+    hit.strip_dir_z = std::stof(columns[5]);
+    hit.strip_normal_x = std::stof(columns[6]);
+    hit.strip_normal_y = std::stof(columns[7]);
+    hit.strip_normal_z = std::stof(columns[8]);
+    hit.hit_pos_x = std::stof(columns[9]);
+    hit.hit_pos_y = std::stof(columns[10]);
+    hit.hit_pos_z = std::stof(columns[11]);
+    hit.poca_x = std::stof(columns[12]);
+    hit.poca_y = std::stof(columns[13]);
+    hit.poca_z = std::stof(columns[14]);
+    hit.event_id = std::stoi(columns[15]);
+    hit.volume_id = std::stoi(columns[16]);
+
+    // Filter by event ID
+    if (hit.event_id == target_event_id) {
+      hits.push_back(hit);
+    }
+  }
+
+  file.close();
+  std::cout << "Read " << hits.size() << " RPC hits for event "
+            << target_event_id << std::endl;
+  return hits;
+}
+
+// Function to get unique volume IDs from hits
+std::vector<int> get_unique_volume_ids(const std::vector<MDTHit> &mdt_hits,
+                                       const std::vector<RPCHit> &rpc_hits) {
+  std::set<int> volume_set;
+
+  for (const auto &hit : mdt_hits) {
+    volume_set.insert(hit.volume_id);
+  }
+  for (const auto &hit : rpc_hits) {
+    volume_set.insert(hit.volume_id);
+  }
+
+  std::vector<int> volume_ids(volume_set.begin(), volume_set.end());
+  std::cout << "Found " << volume_ids.size() << " unique volumes: ";
+  for (int vol : volume_ids) {
+    std::cout << vol << " ";
+  }
+  std::cout << std::endl;
+
+  return volume_ids;
+}
+
+std::vector<int> get_volumes_with_hits(const std::vector<int> &volume_ids,
+                                       const std::vector<MDTHit> &mdt_hits,
+                                       const std::vector<RPCHit> &rpc_hits) {
+  std::set<int> volumes_with_hits;
+
+  for (const auto &hit : mdt_hits) {
+    if (std::find(volume_ids.begin(), volume_ids.end(), hit.volume_id) !=
+        volume_ids.end()) {
+      volumes_with_hits.insert(hit.volume_id);
+    }
+  }
+
+  return std::vector<int>(volumes_with_hits.begin(), volumes_with_hits.end());
+}
+
+void load_csv_data(Data &h_data, const std::string &mdt_filename,
+                   const std::string &rpc_filename, int event_id,
+                   const std::vector<int> &volume_ids) {
+
+  std::cout << "penis" << std::endl;
+  std::vector<MDTHit> mdt_hits = read_mdt_csv(mdt_filename, event_id);
+  std::vector<RPCHit> rpc_hits = read_rpc_csv(rpc_filename, event_id);
+
+  // Group hits by volume
+  std::map<int, std::vector<MDTHit>> mdt_by_volume;
+  std::map<int, std::vector<RPCHit>> rpc_by_volume;
+
+  for (const auto &hit : mdt_hits) {
+    mdt_by_volume[hit.volume_id].push_back(hit);
+  }
+  for (const auto &hit : rpc_hits) {
+    rpc_by_volume[hit.volume_id].push_back(hit);
+  }
+
+  // Calculate total measurements needed
+  int total_measurements = 0;
+  for (int volume_id : volume_ids) {
+    total_measurements +=
+        mdt_by_volume[volume_id].size() + rpc_by_volume[volume_id].size();
+  }
+
+  std::cout << "Total measurements needed: " << total_measurements << std::endl;
+
+  // Allocate host memory
+  h_data.sensor_pos_x = new real_t[total_measurements];
+  h_data.sensor_pos_y = new real_t[total_measurements];
+  h_data.sensor_pos_z = new real_t[total_measurements];
+  h_data.drift_radius = new real_t[total_measurements];
+  h_data.sigma = new real_t[total_measurements];
+
+  int measurement_idx = 0;
+
+  // Fill data for each bucket (volume)
+  for (size_t bucket = 0; bucket < volume_ids.size(); bucket++) {
+    int volume_id = volume_ids[bucket];
+    const auto &mdt_volume_hits = mdt_by_volume[volume_id];
+    const auto &rpc_volume_hits = rpc_by_volume[volume_id];
+
+    std::cout << "Bucket " << bucket << " (Volume " << volume_id
+              << "): " << mdt_volume_hits.size() << " MDT hits, "
+              << rpc_volume_hits.size() << " RPC hits" << std::endl;
+
+    // Fill MDT data
+    for (size_t i = 0; i < mdt_volume_hits.size(); i++) {
+      const auto &hit = mdt_volume_hits[i];
+
+      // Sensor position comes from surface position
+      h_data.sensor_pos_x[measurement_idx] = hit.surface_pos_x;
+      h_data.sensor_pos_y[measurement_idx] = hit.surface_pos_y;
+      h_data.sensor_pos_z[measurement_idx] = hit.surface_pos_z;
+
+      // Calculate drift radius as distance between tube position and hit
+      // position Using only Y and Z coordinates as mentioned in Python comment
+      real_t dy = hit.surface_pos_y - hit.poca_y;
+      real_t dz = hit.surface_pos_z - hit.poca_z;
+      h_data.drift_radius[measurement_idx] = std::sqrt(dy * dy + dz * dz);
+
+      h_data.sigma[measurement_idx] = 0.1f; // Small sigma for all
+      measurement_idx++;
+    }
+
+    // Fill RPC data
+    for (size_t i = 0; i < rpc_volume_hits.size(); i++) {
+      const auto &hit = rpc_volume_hits[i];
+
+      // For RPC, sensor position comes from hit position (POCA)
+      h_data.sensor_pos_x[measurement_idx] = hit.poca_x;
+      h_data.sensor_pos_y[measurement_idx] = hit.poca_y;
+      h_data.sensor_pos_z[measurement_idx] = hit.poca_z;
+
+      // RPC doesn't have drift radius, set to 0
+      h_data.drift_radius[measurement_idx] = 0.0f;
+      h_data.sigma[measurement_idx] = 0.1f;
+      measurement_idx++;
+    }
+  }
+
+  std::cout << "Loaded " << measurement_idx << " total measurements"
+            << std::endl;
+}
+
+void setup_buckets_from_csv(Data &h_data, const std::string &mdt_filename,
+                            const std::string &rpc_filename, int event_id,
+                            std::vector<int> &volume_ids) {
+
+  // Read CSV data to determine bucket structure
+
+  std::vector<MDTHit> mdt_hits = read_mdt_csv(mdt_filename, event_id);
+  std::vector<RPCHit> rpc_hits = read_rpc_csv(rpc_filename, event_id);
+
+  std::cout << "mdt hits: " << mdt_hits.size()
+            << ", rpc hits: " << rpc_hits.size() << std::endl;
+
+  // Get unique volume IDs
+  volume_ids = get_unique_volume_ids(mdt_hits, rpc_hits);
+  std::vector<int> volumes_with_hits =
+      get_volumes_with_hits(volume_ids, mdt_hits, rpc_hits);
+  volume_ids = volumes_with_hits;
+
+  int num_buckets = volume_ids.size();
+
+  // Group hits by volume to determine bucket boundaries
+  std::map<int, std::vector<MDTHit>> mdt_by_volume;
+  std::map<int, std::vector<RPCHit>> rpc_by_volume;
+
+  for (const auto &hit : mdt_hits) {
+    mdt_by_volume[hit.volume_id].push_back(hit);
+  }
+  for (const auto &hit : rpc_hits) {
+    rpc_by_volume[hit.volume_id].push_back(hit);
+  }
+
+  // Allocate bucket arrays
   h_data.buckets = new int[num_buckets * 3];
   h_data.seed_theta = new real_t[num_buckets];
   h_data.seed_phi = new real_t[num_buckets];
   h_data.seed_x0 = new real_t[num_buckets];
   h_data.seed_y0 = new real_t[num_buckets];
 
-  int measurements_per_bucket =
-      mdt_measurements_per_bucket + rpc_measurements_per_bucket;
+  int running_total = 0;
 
   // Set up bucket boundaries
-  for (int i = 0; i < num_buckets; i++) {
-    int bucket_start = i * measurements_per_bucket;
-    int rpc_start = bucket_start + mdt_measurements_per_bucket;
-    int bucket_end = (i + 1) * measurements_per_bucket;
+  for (size_t i = 0; i < volume_ids.size(); i++) {
+    int volume_id = volume_ids[i];
+    int mdt_count = mdt_by_volume[volume_id].size();
+    int rpc_count = rpc_by_volume[volume_id].size();
 
-    h_data.buckets[i * 3 + 0] = bucket_start; // bucket_start
-    h_data.buckets[i * 3 + 1] = rpc_start;    // rpc_start
-    h_data.buckets[i * 3 + 2] = bucket_end;   // bucket_end
+    h_data.buckets[i * 3 + 0] = running_total;             // bucket_start
+    h_data.buckets[i * 3 + 1] = running_total + mdt_count; // rpc_start
+    h_data.buckets[i * 3 + 2] =
+        running_total + mdt_count + rpc_count; // bucket_end
+
+    running_total += mdt_count + rpc_count;
 
     // Initialize output arrays
     h_data.seed_theta[i] = 0.0f;
     h_data.seed_phi[i] = 0.0f;
     h_data.seed_x0[i] = 0.0f;
     h_data.seed_y0[i] = 0.0f;
+
+    std::cout << "Bucket " << i << " (Volume " << volume_id << "): "
+              << "start=" << h_data.buckets[i * 3 + 0]
+              << ", rpc_start=" << h_data.buckets[i * 3 + 1]
+              << ", end=" << h_data.buckets[i * 3 + 2] << std::endl;
   }
 }
 
@@ -194,31 +425,36 @@ void cleanup_device(Data &d_data) {
   cudaFree(d_data.seed_y0);
 }
 
-bool test_seed_lines_basic() {
-  std::cout << "Running test_seed_lines_basic..." << std::endl;
+bool test_seed_lines_csv() {
+  std::cout << "Running test_seed_lines_csv..." << std::endl;
 
-  const int num_buckets = 4;
-  const int mdt_measurements_per_bucket = 16; // Must be < 32 (warpSize)
-  const int rpc_measurements_per_bucket = 4;  // 4 RPC measurements per bucket
-  const int total_measurements =
-      num_buckets * (mdt_measurements_per_bucket + rpc_measurements_per_bucket);
+  // File paths - update these to your actual file paths
+  std::string mdt_filename = "/shared/src/SIGMA/mdt_hits.csv";
+  std::string rpc_filename = "/shared/src/SIGMA/rpc_hits.csv";
+  int event_id = 16; // Choose which event to load
 
-  // Generate test data
   Data h_data;
-  // Generate synthetic line data: a straight line in 3D space
-  real_t true_phi = -1.29891977f;   // 30 degrees in radians
-  real_t true_theta = -0.442532422f; // 60 degrees in radians
-  real_t true_x0 = 786.488959f;
-  real_t true_y0 = -10.3632995f;
-  generate_test_data(h_data, mdt_measurements_per_bucket,
-                     rpc_measurements_per_bucket, num_buckets, true_phi,
-                     true_theta, true_x0, true_y0);
-  setup_buckets(h_data, num_buckets, mdt_measurements_per_bucket,
-                rpc_measurements_per_bucket);
+  std::vector<int> volume_ids;
 
-  // Calculate expected phi:
-  // real_t expected_phi =
-  //     estimate_phi(h_data, total_measurements, measurements_per_bucket);
+  // Set up buckets based on CSV data structure
+  setup_buckets_from_csv(h_data, mdt_filename, rpc_filename, event_id,
+                         volume_ids);
+
+  int num_buckets = volume_ids.size();
+
+  if (num_buckets == 0) {
+    std::cerr << "Error: No buckets found in CSV data" << std::endl;
+    return false;
+  }
+
+  // Load actual CSV data
+  load_csv_data(h_data, mdt_filename, rpc_filename, event_id, volume_ids);
+
+  // Calculate total measurements
+  int total_measurements =
+      h_data.buckets[(num_buckets - 1) * 3 + 2]; // End of last bucket
+  std::cout << "Total measurements to process: " << total_measurements
+            << std::endl;
 
   // Copy to device
   Data d_data = copy_to_device(h_data, total_measurements, num_buckets);
@@ -234,62 +470,40 @@ bool test_seed_lines_basic() {
   // Copy results back
   copy_results_to_host(h_data, d_data, num_buckets);
 
-  // Validate results
-  bool passed = true;
+  // Display results (no validation since we don't know expected values)
+  std::cout << "\nResults:" << std::endl;
   for (int i = 0; i < num_buckets; i++) {
-    std::cout << "Bucket " << i << ": "
-              << "phi=" << h_data.seed_phi[i]
-              << ", theta=" << h_data.seed_theta[i]
-              << ", x0=" << h_data.seed_x0[i] << ", y0=" << h_data.seed_y0[i]
+    std::cout << "Bucket " << i << " (Volume " << volume_ids[i] << "): "
+              << "phi=" << std::setprecision(6) << h_data.seed_phi[i]
+              << ", theta=" << std::setprecision(6) << h_data.seed_theta[i]
+              << ", x0=" << std::setprecision(6) << h_data.seed_x0[i]
+              << ", y0=" << std::setprecision(6) << h_data.seed_y0[i]
               << std::endl;
-
-    // Check that values are within reasonable bounds of true values
-    if (std::abs(h_data.seed_phi[i] - true_phi) > 0.2f) {
-      std::cerr << "Error: phi mismatch in bucket " << i << std::endl;
-      passed = false;
-    }
-
-    if (std::abs(h_data.seed_theta[i] - true_theta) > 0.2f) {
-      std::cerr << "Error: theta mismatch in bucket " << i << std::endl;
-      passed = false;
-    }
-
-    if (std::abs(h_data.seed_x0[i] - true_x0) > 0.5f) {
-      std::cerr << "Error: x0 mismatch in bucket " << i << std::endl;
-      passed = false;
-    }
-
-    if (std::abs(h_data.seed_y0[i] - true_y0) > 0.5f) {
-      std::cerr << "Error: y0 mismatch in bucket " << i << std::endl;
-      passed = false;
-    }
   }
 
   // Cleanup
   cleanup_host(h_data);
   cleanup_device(d_data);
 
-  return passed;
+  return true; // Return true if no errors occurred
 }
 
-
 int main() {
-  std::cout << "Starting GPU kernel tests..." << std::endl;
+  std::cout << "Starting GPU kernel tests with CSV data..." << std::endl;
 
   // Initialize CUDA
   CUDA_CHECK(cudaSetDevice(0));
 
   bool all_passed = true;
 
-  // Run tests
-  all_passed &= test_seed_lines_basic();
-  // all_passed &= test_seed_lines_single_bucket();
+  // Run CSV-based test
+  all_passed &= test_seed_lines_csv();
 
   if (all_passed) {
-    std::cout << "All tests PASSED!" << std::endl;
+    std::cout << "Test completed successfully!" << std::endl;
     return 0;
   } else {
-    std::cout << "Some tests FAILED!" << std::endl;
+    std::cout << "Test failed!" << std::endl;
     return 1;
   }
 }

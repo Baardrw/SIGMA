@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cuda_runtime.h>
 
 #include "config.h"
@@ -11,31 +12,29 @@ __constant__ real_t rho_0_comb[4] = {1, -1, 1, -1};
 __constant__ real_t rho_1_comb[4] = {1, 1, -1, -1};
 __constant__ real_t W_components[3] = {1.0f, 0.0f, 0.0f};
 
-
 __host__ __device__ inline void estimate_phi(struct Data *data, int rpc_start,
-                                    int bucket_end, real_t &phi) {
+                                             int bucket_end, real_t &phi) {
   // Seed phi
   real_t rpc_0_x = data->sensor_pos_x[rpc_start];
   real_t rpc_0_y = data->sensor_pos_y[rpc_start];
   real_t rpc_1_x = data->sensor_pos_x[bucket_end - 1];
   real_t rpc_1_y = data->sensor_pos_y[bucket_end - 1];
 
-  real_t gradient = (rpc_1_y - rpc_0_y) / (rpc_1_x - rpc_0_x + 1e-6);
-  phi = atan(gradient);
+  real_t gradient = (rpc_1_y - rpc_0_y) / (rpc_1_x - rpc_0_x + EPSILON);
+  phi = atanf(gradient);
 }
 
 __device__ inline void estimate_theta(real_t T12_y, real_t T12_z, real_t rho_0,
                                       real_t rho_1, real_t phi, real_t &theta) {
-  // Compute theta
-  theta = atan(T12_y - (rho_0 - rho_1) / (T12_z * sin(phi) + 1e-6));
+  // estimate theta
+  theta = atan((T12_y - (rho_0 - rho_1)) / (T12_z * sin(phi) + EPSILON));
 
 // Iterativley refine theta
 #pragma unroll
   for (int j = 0; j < 4; j++) {
-    theta = atan(T12_y -
-                 (rho_0 - rho_1) *
-                     sqrt(1 + tan(theta) * tan(theta) * sin(phi) * sin(phi)) /
-                     (T12_z * sin(phi) + 1e-6));
+    theta = atan((T12_y - (rho_0 - rho_1) * sqrt(1 + tan(theta) * tan(theta) *
+                                                         sin(phi) * sin(phi))) /
+                 (T12_z * sin(phi) + EPSILON));
   }
 }
 
@@ -54,9 +53,9 @@ __global__ void seed_lines(struct Data *data, int num_buckets) {
     return;
 
   // Initialize bucket size
-  int bucket_start = *(data->buckets + bucket_index * 2);
-  int rpc_start = *(data->buckets + bucket_index * 2 + 1);
-  int bucket_end = *(data->buckets + bucket_index * 2 + 2);
+  int bucket_start = *(data->buckets + bucket_index * 3);
+  int rpc_start = *(data->buckets + bucket_index * 3 + 1);
+  int bucket_end = *(data->buckets + bucket_index * 3 + 2);
   assert(bucket_end - bucket_start < warpSize);
 
   if (tid == 0) {
@@ -80,6 +79,7 @@ __global__ void seed_lines(struct Data *data, int num_buckets) {
     real_t rpc_0_y = data->sensor_pos_y[rpc_start];
 
     estimate_theta(T12_y, T12_z, rho_0, rho_1, phi, theta[tid]);
+    printf("Thread %d: theta = %f\n", tid, theta[tid]);
 
     y0[tid] = (T0_y - T0_z * tan(theta[tid]) * sin(phi) -
                rho_0 * sqrt(1 + tan(theta[tid]) * tan(theta[tid]) * sin(phi) *
@@ -94,25 +94,29 @@ __global__ void seed_lines(struct Data *data, int num_buckets) {
     y0[j] = __shfl_sync(FULL_MASK, y0[j], j);
   }
 
-  real_t residuals[4];
+  real_t chi2_arr[4];
   for (int j = 0; j < 4; j++) {
     line_t line;
     lineMath::create_line(x0[j], y0[j], phi, theta[j], line);
-    lineMath::compute_Dortho(line, {W_components[0], W_components[1], W_components[2]});
+    lineMath::compute_Dortho(
+        line, {W_components[0], W_components[1], W_components[2]});
 
-    real_t residual = residualMath::compute_chi2(data, line, bucket_start, rpc_start,
-                                  bucket_end);
-    residuals[j] = residual;
+    real_t chi2_val = residualMath::compute_chi2(data, line, bucket_start,
+                                                 rpc_start, bucket_end);
+    chi2_arr[j] = chi2_val;
   }
 
-  // Residuals are only valid for thread id 0 
-  if (tid == 0){
+  // Residuals are only valid for thread id 0
+
+  if (tid == 0) {
+    printf("Thread %d: chi2_arr = [%f, %f, %f, %f]\n", tid, chi2_arr[0],
+           chi2_arr[1], chi2_arr[2], chi2_arr[3]);
     // Store the best line parameters
-    real_t min_residual = residuals[0];
+    real_t min_residual = chi2_arr[0];
     int best_index = 0;
     for (int j = 1; j < 4; j++) {
-      if (residuals[j] < min_residual) {
-        min_residual = residuals[j];
+      if (chi2_arr[j] < min_residual) {
+        min_residual = chi2_arr[j];
         best_index = j;
       }
     }
