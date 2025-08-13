@@ -117,18 +117,19 @@ endif()
 
 
 # # ===== OPTIONAL BENCHMARKS =====
-# option(BUILD_BENCHMARKS "Build benchmark programs" OFF)
-# if(BUILD_BENCHMARKS)
-#     add_executable(sigma_benchmark
-#         benchmarks/benchmark_main.cpp
-#         benchmarks/segment_formation_benchmark.cu
-#     )
+option(BUILD_BENCHMARKS "Build benchmark programs" ON)
+if(BUILD_BENCHMARKS)
+    add_executable(sigma_benchmark
+        benchmarks/benchmark_main.cu
+    )
     
-#     # Benchmarks also link against the library
-#     target_link_libraries(sigma_benchmark
-#         sigma_lib
-#     )
-# endif()
+    # Benchmarks also link against the library
+    target_link_libraries(sigma_benchmark
+        sigma_lib
+        Threads::Threads
+        Eigen3::Eigen
+    )
+endif()
 
 # ===== INSTALLATION =====
 install(TARGETS sigma sigma_lib

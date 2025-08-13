@@ -79,7 +79,6 @@ __global__ void seed_lines(struct Data *data, int num_buckets) {
     real_t rpc_0_y = data->sensor_pos_y[rpc_start];
 
     estimate_theta(T12_y, T12_z, rho_0, rho_1, phi, theta[tid]);
-    printf("Thread %d: theta = %f\n", tid, theta[tid]);
 
     y0[tid] = (T0_y - T0_z * tan(theta[tid]) * sin(phi) -
                rho_0 * sqrt(1 + tan(theta[tid]) * tan(theta[tid]) * sin(phi) *

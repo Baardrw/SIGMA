@@ -1,5 +1,7 @@
 #include <Eigen/Dense>
 #include <cassert>
+#include <chrono>
+#include <clocale>
 #include <cmath>
 #include <cuda_runtime.h>
 #include <fstream>
@@ -7,6 +9,7 @@
 #include <iostream>
 #include <map>
 #include <math.h>
+#include <numeric>
 #include <set>
 #include <sstream>
 #include <string>
@@ -197,7 +200,8 @@ std::vector<int> get_volumes_with_hits(const std::vector<int> &volume_ids,
 
 void load_csv_data(Data &h_data, const std::string &mdt_filename,
                    const std::string &rpc_filename, int event_id,
-                   const std::vector<int> &volume_ids) {
+                   const std::vector<int> &volume_ids,
+                   int duplications = 10000) {
 
   std::vector<MDTHit> mdt_hits = read_mdt_csv(mdt_filename, event_id);
   std::vector<RPCHit> rpc_hits = read_rpc_csv(rpc_filename, event_id);
@@ -223,23 +227,23 @@ void load_csv_data(Data &h_data, const std::string &mdt_filename,
   std::cout << "Total measurements needed: " << total_measurements << std::endl;
 
   // Allocate host memory
-  h_data.sensor_pos_x = new real_t[total_measurements];
-  h_data.sensor_pos_y = new real_t[total_measurements];
-  h_data.sensor_pos_z = new real_t[total_measurements];
-  h_data.drift_radius = new real_t[total_measurements];
-  h_data.sigma = new real_t[total_measurements];
+  h_data.sensor_pos_x = new real_t[total_measurements * duplications];
+  h_data.sensor_pos_y = new real_t[total_measurements * duplications];
+  h_data.sensor_pos_z = new real_t[total_measurements * duplications];
+  h_data.drift_radius = new real_t[total_measurements * duplications];
+  h_data.sigma = new real_t[total_measurements * duplications];
 
   int measurement_idx = 0;
 
   // Fill data for each bucket (volume)
-  for (size_t bucket = 0; bucket < volume_ids.size(); bucket++) {
-    int volume_id = volume_ids[bucket];
+  for (size_t bucket = 0; bucket < volume_ids.size() * duplications; bucket++) {
+    int volume_id = volume_ids[bucket % volume_ids.size()];
     const auto &mdt_volume_hits = mdt_by_volume[volume_id];
     const auto &rpc_volume_hits = rpc_by_volume[volume_id];
 
-    std::cout << "Bucket " << bucket << " (Volume " << volume_id
-              << "): " << mdt_volume_hits.size() << " MDT hits, "
-              << rpc_volume_hits.size() << " RPC hits" << std::endl;
+    // std::cout << "Bucket " << bucket << " (Volume " << volume_id
+    //           << "): " << mdt_volume_hits.size() << " MDT hits, "
+    //           << rpc_volume_hits.size() << " RPC hits" << std::endl;
 
     // Fill MDT data
     for (size_t i = 0; i < mdt_volume_hits.size(); i++) {
@@ -282,7 +286,8 @@ void load_csv_data(Data &h_data, const std::string &mdt_filename,
 
 void setup_buckets_from_csv(Data &h_data, const std::string &mdt_filename,
                             const std::string &rpc_filename, int event_id,
-                            std::vector<int> &volume_ids) {
+                            std::vector<int> &volume_ids,
+                            int duplications = 10000) {
 
   // Read CSV data to determine bucket structure
 
@@ -298,7 +303,7 @@ void setup_buckets_from_csv(Data &h_data, const std::string &mdt_filename,
       get_volumes_with_hits(volume_ids, mdt_hits, rpc_hits);
   volume_ids = volumes_with_hits;
 
-  int num_buckets = volume_ids.size();
+  int num_buckets = volume_ids.size() * duplications;
 
   // Group hits by volume to determine bucket boundaries
   std::map<int, std::vector<MDTHit>> mdt_by_volume;
@@ -321,8 +326,8 @@ void setup_buckets_from_csv(Data &h_data, const std::string &mdt_filename,
   int running_total = 0;
 
   // Set up bucket boundaries
-  for (size_t i = 0; i < volume_ids.size(); i++) {
-    int volume_id = volume_ids[i];
+  for (size_t i = 0; i < volume_ids.size() * duplications; i++) {
+    int volume_id = volume_ids[i % volume_ids.size()];
     int mdt_count = mdt_by_volume[volume_id].size();
     int rpc_count = rpc_by_volume[volume_id].size();
 
@@ -339,10 +344,10 @@ void setup_buckets_from_csv(Data &h_data, const std::string &mdt_filename,
     h_data.seed_x0[i] = 0.0f;
     h_data.seed_y0[i] = 0.0f;
 
-    std::cout << "Bucket " << i << " (Volume " << volume_id << "): "
-              << "start=" << h_data.buckets[i * 3 + 0]
-              << ", rpc_start=" << h_data.buckets[i * 3 + 1]
-              << ", end=" << h_data.buckets[i * 3 + 2] << std::endl;
+    // std::cout << "Bucket " << i << " (Volume " << volume_id << "): "
+    //           << "start=" << h_data.buckets[i * 3 + 0]
+    //           << ", rpc_start=" << h_data.buckets[i * 3 + 1]
+    //           << ", end=" << h_data.buckets[i * 3 + 2] << std::endl;
   }
 }
 
@@ -424,8 +429,9 @@ void cleanup_device(Data &d_data) {
   cudaFree(d_data.seed_y0);
 }
 
-bool test_seed_lines_csv() {
-  std::cout << "Running test_seed_lines_csv..." << std::endl;
+bool benchmark_seed_line_with_duplicate_data() {
+  std::cout << "Running benchmark_seed_line_with_duplicate_data..."
+            << std::endl;
 
   // File paths - update these to your actual file paths
   std::string mdt_filename = "/shared/src/SIGMA/mdt_hits.csv";
@@ -435,11 +441,18 @@ bool test_seed_lines_csv() {
   Data h_data;
   std::vector<int> volume_ids;
 
-  // Set up buckets based on CSV data structure
-  setup_buckets_from_csv(h_data, mdt_filename, rpc_filename, event_id,
-                         volume_ids);
+  // Timing variables
+  auto start_total = std::chrono::high_resolution_clock::now();
+  auto start_setup = std::chrono::high_resolution_clock::now();
 
-  int num_buckets = volume_ids.size();
+  // Set up buckets based on CSV data structure
+  int duplications = 10000000; // Number of duplications for each volume
+  setup_buckets_from_csv(h_data, mdt_filename, rpc_filename, event_id,
+                         volume_ids, duplications);
+
+  auto end_setup = std::chrono::high_resolution_clock::now();
+
+  int num_buckets = volume_ids.size() * duplications;
 
   if (num_buckets == 0) {
     std::cerr << "Error: No buckets found in CSV data" << std::endl;
@@ -447,40 +460,161 @@ bool test_seed_lines_csv() {
   }
 
   // Load actual CSV data
-  load_csv_data(h_data, mdt_filename, rpc_filename, event_id, volume_ids);
+  auto start_load = std::chrono::high_resolution_clock::now();
+  load_csv_data(h_data, mdt_filename, rpc_filename, event_id, volume_ids,
+                duplications);
+  auto end_load = std::chrono::high_resolution_clock::now();
 
   // Calculate total measurements
   int total_measurements =
       h_data.buckets[(num_buckets - 1) * 3 + 2]; // End of last bucket
   std::cout << "Total measurements to process: " << total_measurements
             << std::endl;
+  std::cout << "Number of buckets: " << num_buckets << std::endl;
+  std::cout << "Average measurements per bucket: "
+            << (float)total_measurements / num_buckets << std::endl;
 
-  // Copy to device
+  // Copy to device with timing
+  auto start_h2d = std::chrono::high_resolution_clock::now();
   Data d_data = copy_to_device(h_data, total_measurements, num_buckets);
+  CUDA_CHECK(cudaDeviceSynchronize()); // Ensure copy is complete
+  auto end_h2d = std::chrono::high_resolution_clock::now();
 
-  // Launch kernel
-  const int block_size = 32;          // One warp
-  const int num_blocks = num_buckets; // One block per bucket
+  // Create CUDA events for precise kernel timing
+  cudaEvent_t kernel_start, kernel_end;
+  CUDA_CHECK(cudaEventCreate(&kernel_start));
+  CUDA_CHECK(cudaEventCreate(&kernel_end));
 
+  // Launch kernel with timing
+  const int warpSize = 32;
+  const int warps_per_block = 5;
+  const int block_size = warpSize * warps_per_block;
+  const int num_blocks = num_buckets / (warps_per_block) + 
+                         (num_buckets % (warps_per_block) == 0 ? 0 : 1);
+
+  // Warm up run (optional - helps with consistent timing)
   seed_lines<<<num_blocks, block_size>>>(&d_data, num_buckets);
   CUDA_CHECK(cudaDeviceSynchronize());
-  CUDA_CHECK(cudaGetLastError());
 
-  // Copy results back
-  copy_results_to_host(h_data, d_data, num_buckets);
+  // Timed runs
+  const int num_runs = 10; // Run multiple times for better statistics
+  std::vector<float> kernel_times;
 
-  // Display results (no validation since we don't know expected values)
-  std::cout << "\nResults:" << std::endl;
-  for (int i = 0; i < num_buckets; i++) {
-    std::cout << "Bucket " << i << " (Volume " << volume_ids[i] << "): "
-              << "phi=" << std::setprecision(6) << h_data.seed_phi[i]
-              << ", theta=" << std::setprecision(6) << h_data.seed_theta[i]
-              << ", x0=" << std::setprecision(6) << h_data.seed_x0[i]
-              << ", y0=" << std::setprecision(6) << h_data.seed_y0[i]
-              << std::endl;
+  auto start_kernel_total = std::chrono::high_resolution_clock::now();
+
+  for (int run = 0; run < num_runs; run++) {
+    CUDA_CHECK(cudaEventRecord(kernel_start, 0));
+    seed_lines<<<num_blocks, block_size>>>(&d_data, num_buckets);
+    CUDA_CHECK(cudaEventRecord(kernel_end, 0));
+    CUDA_CHECK(cudaEventSynchronize(kernel_end));
+
+    float kernel_time_ms;
+    CUDA_CHECK(cudaEventElapsedTime(&kernel_time_ms, kernel_start, kernel_end));
+    kernel_times.push_back(kernel_time_ms);
   }
 
+  auto end_kernel_total = std::chrono::high_resolution_clock::now();
+
+  CUDA_CHECK(cudaGetLastError());
+
+  // Copy results back with timing
+  auto start_d2h = std::chrono::high_resolution_clock::now();
+  copy_results_to_host(h_data, d_data, num_buckets);
+  CUDA_CHECK(cudaDeviceSynchronize()); // Ensure copy is complete
+  auto end_d2h = std::chrono::high_resolution_clock::now();
+
+  auto end_total = std::chrono::high_resolution_clock::now();
+
+  // Calculate timing statistics
+  auto setup_time =
+      std::chrono::duration<double, std::milli>(end_setup - start_setup)
+          .count();
+  auto load_time =
+      std::chrono::duration<double, std::milli>(end_load - start_load).count();
+  auto h2d_time =
+      std::chrono::duration<double, std::milli>(end_h2d - start_h2d).count();
+  auto d2h_time =
+      std::chrono::duration<double, std::milli>(end_d2h - start_d2h).count();
+  auto total_time =
+      std::chrono::duration<double, std::milli>(end_total - start_total)
+          .count();
+  auto kernel_total_time = std::chrono::duration<double, std::milli>(
+                               end_kernel_total - start_kernel_total)
+                               .count();
+
+  // Kernel timing statistics
+  float min_kernel_time =
+      *std::min_element(kernel_times.begin(), kernel_times.end());
+  float max_kernel_time =
+      *std::max_element(kernel_times.begin(), kernel_times.end());
+  float avg_kernel_time =
+      std::accumulate(kernel_times.begin(), kernel_times.end(), 0.0f) /
+      kernel_times.size();
+
+  // Calculate standard deviation
+  float variance = 0.0f;
+  for (float time : kernel_times) {
+    variance += (time - avg_kernel_time) * (time - avg_kernel_time);
+  }
+  float std_dev = std::sqrt(variance / kernel_times.size());
+
+  // Performance metrics
+  double measurements_per_second =
+      (total_measurements * num_runs) / (kernel_total_time / 1000.0);
+  double buckets_per_second =
+      (num_buckets * num_runs) / (kernel_total_time / 1000.0);
+
+  // Memory bandwidth estimation (rough)
+  size_t estimated_bytes_transferred =
+      total_measurements *
+          (sizeof(float) * 6 + sizeof(int)) + // Input data per measurement
+      num_buckets * sizeof(float) * 4;        // Output data per bucket
+  double memory_bandwidth_gb_s = (estimated_bytes_transferred * num_runs) /
+                                 (kernel_total_time / 1000.0) /
+                                 (1024 * 1024 * 1024);
+
+  // Print detailed results
+  std::cout << "\n=== BENCHMARK RESULTS ===" << std::endl;
+  std::cout << std::fixed << std::setprecision(3);
+
+  std::cout << "\n--- Timing Breakdown ---" << std::endl;
+  std::cout << "Setup time:              " << setup_time << " ms" << std::endl;
+  std::cout << "Data loading time:       " << load_time << " ms" << std::endl;
+  std::cout << "Host to Device copy:     " << h2d_time << " ms" << std::endl;
+  std::cout << "Device to Host copy:     " << d2h_time << " ms" << std::endl;
+  std::cout << "Total time:              " << total_time << " ms" << std::endl;
+
+  std::cout << "\n--- Kernel Performance (average of " << num_runs
+            << " runs) ---" << std::endl;
+  std::cout << "Average kernel time:     " << avg_kernel_time << " ms"
+            << std::endl;
+  std::cout << "Min kernel time:         " << min_kernel_time << " ms"
+            << std::endl;
+  std::cout << "Max kernel time:         " << max_kernel_time << " ms"
+            << std::endl;
+  std::cout << "Standard deviation:      " << std_dev << " ms" << std::endl;
+  std::cout << "Coefficient of variation: " << (std_dev / avg_kernel_time * 100)
+            << "%" << std::endl;
+
+  std::cout << "\n--- Performance Metrics ---" << std::endl;
+  std::cout << "Measurements per second: " << std::scientific
+            << measurements_per_second << std::endl;
+  std::cout << "Buckets per second:      " << buckets_per_second << std::endl;
+  std::cout << "Est. memory bandwidth:   " << std::fixed
+            << memory_bandwidth_gb_s << " GB/s" << std::endl;
+
+  std::cout << "\n--- GPU Utilization ---" << std::endl;
+  std::cout << "Blocks launched:         " << num_blocks << std::endl;
+  std::cout << "Threads per block:       " << block_size << std::endl;
+  std::cout << "Total threads:           " << num_blocks * block_size
+            << std::endl;
+  std::cout << "Thread utilization:      " << std::fixed << std::setprecision(1)
+            << (float)(total_measurements) / (num_blocks * block_size) * 100
+            << "%" << std::endl;
+
   // Cleanup
+  CUDA_CHECK(cudaEventDestroy(kernel_start));
+  CUDA_CHECK(cudaEventDestroy(kernel_end));
   cleanup_host(h_data);
   cleanup_device(d_data);
 
@@ -496,7 +630,7 @@ int main() {
   bool all_passed = true;
 
   // Run CSV-based test
-  all_passed &= test_seed_lines_csv();
+  all_passed &= benchmark_seed_line_with_duplicate_data();
 
   if (all_passed) {
     std::cout << "Test completed successfully!" << std::endl;
