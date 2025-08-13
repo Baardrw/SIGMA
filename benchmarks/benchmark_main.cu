@@ -446,7 +446,7 @@ bool benchmark_seed_line_with_duplicate_data() {
   auto start_setup = std::chrono::high_resolution_clock::now();
 
   // Set up buckets based on CSV data structure
-  int duplications = 10000000; // Number of duplications for each volume
+  int duplications = 1000; // Number of duplications for each volume
   setup_buckets_from_csv(h_data, mdt_filename, rpc_filename, event_id,
                          volume_ids, duplications);
 
@@ -487,10 +487,11 @@ bool benchmark_seed_line_with_duplicate_data() {
 
   // Launch kernel with timing
   const int warpSize = 32;
+  const int cg_group_size = 16; // Use 16 threads per warp for cooperative groups
   const int warps_per_block = 5;
   const int block_size = warpSize * warps_per_block;
-  const int num_blocks = num_buckets / (warps_per_block) + 
-                         (num_buckets % (warps_per_block) == 0 ? 0 : 1);
+  const int num_blocks = num_buckets / (warps_per_block * (warpSize / cg_group_size)) + 
+                         (num_buckets % (warps_per_block * (warpSize / cg_group_size)) == 0 ? 0 : 1);
 
   // Warm up run (optional - helps with consistent timing)
   seed_lines<<<num_blocks, block_size>>>(&d_data, num_buckets);
@@ -602,15 +603,6 @@ bool benchmark_seed_line_with_duplicate_data() {
   std::cout << "Buckets per second:      " << buckets_per_second << std::endl;
   std::cout << "Est. memory bandwidth:   " << std::fixed
             << memory_bandwidth_gb_s << " GB/s" << std::endl;
-
-  std::cout << "\n--- GPU Utilization ---" << std::endl;
-  std::cout << "Blocks launched:         " << num_blocks << std::endl;
-  std::cout << "Threads per block:       " << block_size << std::endl;
-  std::cout << "Total threads:           " << num_blocks * block_size
-            << std::endl;
-  std::cout << "Thread utilization:      " << std::fixed << std::setprecision(1)
-            << (float)(total_measurements) / (num_blocks * block_size) * 100
-            << "%" << std::endl;
 
   // Cleanup
   CUDA_CHECK(cudaEventDestroy(kernel_start));

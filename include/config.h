@@ -5,6 +5,7 @@
 
 #define EPSILON 1e-6
 #define FULL_MASK 0xffffffff
+#define MAX_MPB 16 // Max measurements per bucket
 
 typedef float real_t;
 typedef float3 real3_t;

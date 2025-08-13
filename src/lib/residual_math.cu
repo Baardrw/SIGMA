@@ -2,6 +2,9 @@
 #include "line_math.h"
 #include "residual_math.h"
 
+using namespace cooperative_groups;
+namespace cg = cooperative_groups;
+
 extern __constant__ real_t W_components[3];
 
 namespace residualMath {
@@ -37,7 +40,8 @@ __device__ real_t compute_residual(struct Data *data, line_t &line,
  *
  * @returns Chi2 value for the line, ONLY ON THREAD 0
  */
-__device__ real_t compute_chi2(struct Data *data, line_t &line,
+__device__ real_t compute_chi2(cg::thread_block_tile<MAX_MPB> block_tile,
+                               struct Data *data, line_t &line,
                                int bucket_start, int rpc_start,
                                int bucket_end) {
   real_t chi2 = 0.0f;
@@ -53,7 +57,8 @@ __device__ real_t compute_chi2(struct Data *data, line_t &line,
   real_t chi_val = residual * residual * inverse_sigma_squared;
 
   for (int i = warpSize / 2; i >= 1; i /= 2) {
-    chi_val += __shfl_down_sync(FULL_MASK, chi_val, i);
+    block_tile.sync();
+    chi_val += block_tile.shfl_down(chi_val, i);
   }
 
   chi2 = chi_val;

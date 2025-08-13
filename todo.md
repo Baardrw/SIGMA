@@ -1,0 +1,1 @@
+- Extend chi2 calculations to handle overflow cases (when there are more measurments than threads available)

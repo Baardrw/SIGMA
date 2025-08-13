@@ -1,4 +1,5 @@
 #include <cmath>
+#include <cooperative_groups.h>
 #include <cuda_runtime.h>
 
 #include "config.h"
@@ -6,6 +7,9 @@
 #include "line_math.h"
 #include "muon_segment.h"
 #include "residual_math.h"
+
+using namespace cooperative_groups;
+namespace cg = cooperative_groups;
 
 // Constant detirmining the combinatorics for estimating theta
 __constant__ real_t rho_0_comb[4] = {1, -1, 1, -1};
@@ -45,9 +49,11 @@ __global__ void seed_lines(struct Data *data, int num_buckets) {
   real_t x0[4];
   real_t y0[4];
 
+  cg::thread_block_tile<MAX_MPB> bucket_tile =
+      cg::tiled_partition<MAX_MPB>(cg::this_thread_block());
+
   unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
-  int bucket_index = i / 32; // one warp per bucket
-  int tid = i % 32;          // thread id in warp
+  int bucket_index = i / MAX_MPB;
 
   if (bucket_index >= num_buckets)
     return;
@@ -58,12 +64,15 @@ __global__ void seed_lines(struct Data *data, int num_buckets) {
   int bucket_end = *(data->buckets + bucket_index * 3 + 2);
   assert(bucket_end - bucket_start < warpSize);
 
-  if (tid == 0) {
+  if (bucket_tile.thread_rank() == 0) {
     estimate_phi(data, rpc_start, bucket_end, phi);
   }
-  phi = __shfl_sync(FULL_MASK, phi, 0);
 
-  if (tid < 4) {
+  // Synchronize to ensure phi is set before proceeding7
+  bucket_tile.sync();
+  phi = bucket_tile.shfl(phi, 0);
+
+  if (bucket_tile.thread_rank() < 4) {
     real_t T0_y = data->sensor_pos_y[bucket_start];
     real_t T0_z = data->sensor_pos_z[bucket_start];
     real_t T1_y = data->sensor_pos_y[rpc_start - 1];
@@ -72,25 +81,33 @@ __global__ void seed_lines(struct Data *data, int num_buckets) {
     real_t T12_y = T0_y - T1_y;
     real_t T12_z = T0_z - T1_z;
 
-    real_t rho_0 = data->drift_radius[bucket_start] * rho_0_comb[tid];
-    real_t rho_1 = data->drift_radius[rpc_start - 1] * rho_1_comb[tid];
+    real_t rho_0 = data->drift_radius[bucket_start] *
+                   rho_0_comb[bucket_tile.thread_rank()];
+    real_t rho_1 = data->drift_radius[rpc_start - 1] *
+                   rho_1_comb[bucket_tile.thread_rank()];
 
     real_t rpc_0_x = data->sensor_pos_x[rpc_start];
     real_t rpc_0_y = data->sensor_pos_y[rpc_start];
 
-    estimate_theta(T12_y, T12_z, rho_0, rho_1, phi, theta[tid]);
+    estimate_theta(T12_y, T12_z, rho_0, rho_1, phi,
+                   theta[bucket_tile.thread_rank()]);
 
-    y0[tid] = (T0_y - T0_z * tan(theta[tid]) * sin(phi) -
-               rho_0 * sqrt(1 + tan(theta[tid]) * tan(theta[tid]) * sin(phi) *
-                                    sin(phi)));
+    y0[bucket_tile.thread_rank()] =
+        (T0_y - T0_z * tan(theta[bucket_tile.thread_rank()]) * sin(phi) -
+         rho_0 * sqrt(1 + tan(theta[bucket_tile.thread_rank()]) *
+                              tan(theta[bucket_tile.thread_rank()]) * sin(phi) *
+                              sin(phi)));
 
-    x0[tid] = rpc_0_x - cos(phi) / sin(phi) * (rpc_0_y - y0[tid]);
+    x0[bucket_tile.thread_rank()] =
+        rpc_0_x -
+        cos(phi) / sin(phi) * (rpc_0_y - y0[bucket_tile.thread_rank()]);
   }
 
   for (int j = 0; j < 4; j++) {
-    theta[j] = __shfl_sync(FULL_MASK, theta[j], j);
-    x0[j] = __shfl_sync(FULL_MASK, x0[j], j);
-    y0[j] = __shfl_sync(FULL_MASK, y0[j], j);
+    bucket_tile.sync();
+    theta[j] = bucket_tile.shfl(theta[j], j);
+    x0[j] = bucket_tile.shfl(x0[j], j);
+    y0[j] = bucket_tile.shfl(y0[j], j);
   }
 
   real_t chi2_arr[4];
@@ -100,14 +117,14 @@ __global__ void seed_lines(struct Data *data, int num_buckets) {
     lineMath::compute_Dortho(
         line, {W_components[0], W_components[1], W_components[2]});
 
-    real_t chi2_val = residualMath::compute_chi2(data, line, bucket_start,
+    real_t chi2_val = residualMath::compute_chi2(bucket_tile, data, line, bucket_start,
                                                  rpc_start, bucket_end);
     chi2_arr[j] = chi2_val;
   }
 
   // Residuals are only valid for thread id 0
 
-  if (tid == 0) {
+  if (bucket_tile.thread_rank() == 0) {
     // Store the best line parameters
     real_t min_residual = chi2_arr[0];
     int best_index = 0;
