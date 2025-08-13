@@ -42,27 +42,34 @@ __device__ inline void estimate_theta(real_t T12_y, real_t T12_z, real_t rho_0,
   }
 }
 
+__device__ inline void
+initialize_bucket_indexing(struct Data *data, int bucket_index,
+                           int &bucket_start, int &rpc_start, int &bucket_end) {
+
+  // Initialize bucket size
+  bucket_start = *(data->buckets + bucket_index * 3);
+  rpc_start = *(data->buckets + bucket_index * 3 + 1);
+  bucket_end = *(data->buckets + bucket_index * 3 + 2);
+  assert(bucket_end - bucket_start < MAX_MPB);
+}
+
 __global__ void seed_lines(struct Data *data, int num_buckets) {
+  unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+  int bucket_index = i / MAX_MPB;
+  if (bucket_index >= num_buckets)
+    return;
+
+  cg::thread_block_tile<MAX_MPB> bucket_tile =
+      cg::tiled_partition<MAX_MPB>(cg::this_thread_block());
+  int bucket_start, rpc_start, bucket_end;
+  initialize_bucket_indexing(data, bucket_index, bucket_start, rpc_start,
+                             bucket_end);
+
   // Line params
   real_t phi = 0.0f;
   real_t theta[4];
   real_t x0[4];
   real_t y0[4];
-
-  cg::thread_block_tile<MAX_MPB> bucket_tile =
-      cg::tiled_partition<MAX_MPB>(cg::this_thread_block());
-
-  unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
-  int bucket_index = i / MAX_MPB;
-
-  if (bucket_index >= num_buckets)
-    return;
-
-  // Initialize bucket size
-  int bucket_start = *(data->buckets + bucket_index * 3);
-  int rpc_start = *(data->buckets + bucket_index * 3 + 1);
-  int bucket_end = *(data->buckets + bucket_index * 3 + 2);
-  assert(bucket_end - bucket_start < warpSize);
 
   if (bucket_tile.thread_rank() == 0) {
     estimate_phi(data, rpc_start, bucket_end, phi);
@@ -114,11 +121,16 @@ __global__ void seed_lines(struct Data *data, int num_buckets) {
   for (int j = 0; j < 4; j++) {
     line_t line;
     lineMath::create_line(x0[j], y0[j], phi, theta[j], line);
-    lineMath::compute_Dortho(
+    lineMath::compute_D_ortho(
         line, {W_components[0], W_components[1], W_components[2]});
 
-    real_t chi2_val = residualMath::compute_chi2(bucket_tile, data, line, bucket_start,
-                                                 rpc_start, bucket_end);
+    residual_cache_t residual_cache;
+    residualMath::compute_residual(data, line, bucket_tile.thread_rank(),
+                                   bucket_start, rpc_start, bucket_end,
+                                   residual_cache);
+    real_t chi2_val =
+        residualMath::get_chi2(bucket_tile, data, line, residual_cache,
+                               bucket_start, rpc_start, bucket_end);
     chi2_arr[j] = chi2_val;
   }
 
@@ -142,4 +154,43 @@ __global__ void seed_lines(struct Data *data, int num_buckets) {
   }
 
   return;
+}
+
+__global__ void fit_line(struct Data *data, int num_buckets) {
+  unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+  int bucket_index = i / MAX_MPB;
+  if (bucket_index >= num_buckets)
+    return;
+
+  extern __shared__ real_t s_data[];
+
+  cg::thread_block_tile<MAX_MPB> bucket_tile =
+      cg::tiled_partition<MAX_MPB>(cg::this_thread_block());
+  int bucket_start, rpc_start, bucket_end;
+  initialize_bucket_indexing(data, bucket_index, bucket_start, rpc_start,
+                             bucket_end);
+  line_t line;
+  lineMath::create_line(
+      data->seed_x0[bucket_index], data->seed_y0[bucket_index],
+      data->seed_phi[bucket_index], data->seed_theta[bucket_index], line);
+
+  residual_cache_t residual_cache;
+  for (int j = 0; j < 1000; j++) {
+    // Update derivatives
+    lineMath::update_derivatives(
+        line, {W_components[0], W_components[1], W_components[2]});
+    residualMath::compute_residual(data, line, bucket_tile.thread_rank(),
+                                   bucket_start, rpc_start, bucket_end,
+                                   residual_cache);
+    residualMath::compute_delta_residuals(data, line, bucket_tile.thread_rank(),
+                                          bucket_start, rpc_start, bucket_end,
+                                          residual_cache);
+
+    Vector4 gradient =
+        residualMath::get_gradient(bucket_tile, data, line, residual_cache,
+                                   bucket_start, rpc_start, bucket_end);
+
+    // Matrix4 hessian = residualMath::get_hessian(
+    //     bucket_tile, data, line, bucket_start, rpc_start, bucket_end);
+  }
 }

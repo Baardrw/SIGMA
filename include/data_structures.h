@@ -9,6 +9,16 @@
 #define GET_X0(line) (line.params[2])
 #define GET_Y0(line) (line.params[3])
 
+#define EIGEN_VEC3(data, prefix, i)                                            \
+  Vector3((data)->prefix##_x[i], (data)->prefix##_y[i],                \
+                  (data)->prefix##_z[i])
+
+
+#define SENSOR_POS(data, i) EIGEN_VEC3(data, sensor_pos, i)
+#define HIT_POS(data, i) EIGEN_VEC3(data, hit_pos, i)
+#define RPC_HIT_POS(data, i) EIGEN_VEC3(data, rpc_hit, i)
+#define RPC_NORMAL(data, i) EIGEN_VEC3(data, rpc_normal, i)
+
 struct Data {
   real_t *sensor_pos_x;
   real_t *sensor_pos_y;
@@ -27,7 +37,7 @@ struct Data {
   real_t *to_next_d_z;
 
   real_t *drift_radius;
-  real_t *sigma;  // Dirft radius uncertainty
+  real_t *sigma; // Dirft radius uncertainty
 
   real_t *time;
   int *buckets; // bucket[bucket_index * 2] -> start of mdt data
@@ -70,7 +80,7 @@ typedef struct line {
   Vector3 S0;
   Vector3 dS0[2] = {{1, 0, 0}, {0, 1, 0}}; // x0, y0
 
-  Vector3 Dortho;
-  Vector3 dDortho[2];  // theta, phi
-  Vector3 ddDortho[3]; // theta theta, phi phi, theta phi
+  Vector3 D_ortho;
+  Vector3 dD_ortho[2];  // theta, phi
+  Vector3 ddD_ortho[3]; // theta theta, phi phi, theta phi
 } line_t;
