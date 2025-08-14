@@ -19,8 +19,11 @@
 #include "data_structures.h"
 #include "muon_segment.h"
 
+#define DUPLICATIONS 1000000
+
 // Forward declaration of the kernel we want to test
 __global__ void seed_lines(struct Data *data, int num_buckets);
+__global__ void fit_lines(struct Data *data, int num_buckets);
 
 // Helper function to check CUDA errors
 #define CUDA_CHECK(call)                                                       \
@@ -318,10 +321,10 @@ void setup_buckets_from_csv(Data &h_data, const std::string &mdt_filename,
 
   // Allocate bucket arrays
   h_data.buckets = new int[num_buckets * 3];
-  h_data.seed_theta = new real_t[num_buckets];
-  h_data.seed_phi = new real_t[num_buckets];
-  h_data.seed_x0 = new real_t[num_buckets];
-  h_data.seed_y0 = new real_t[num_buckets];
+  h_data.theta = new real_t[num_buckets];
+  h_data.phi = new real_t[num_buckets];
+  h_data.x0 = new real_t[num_buckets];
+  h_data.y0 = new real_t[num_buckets];
 
   int running_total = 0;
 
@@ -339,10 +342,10 @@ void setup_buckets_from_csv(Data &h_data, const std::string &mdt_filename,
     running_total += mdt_count + rpc_count;
 
     // Initialize output arrays
-    h_data.seed_theta[i] = 0.0f;
-    h_data.seed_phi[i] = 0.0f;
-    h_data.seed_x0[i] = 0.0f;
-    h_data.seed_y0[i] = 0.0f;
+    h_data.theta[i] = 0.0f;
+    h_data.phi[i] = 0.0f;
+    h_data.x0[i] = 0.0f;
+    h_data.y0[i] = 0.0f;
 
     // std::cout << "Bucket " << i << " (Volume " << volume_id << "): "
     //           << "start=" << h_data.buckets[i * 3 + 0]
@@ -365,10 +368,10 @@ Data copy_to_device(const Data &h_data, int num_measurements, int num_buckets) {
       cudaMalloc(&d_data.drift_radius, num_measurements * sizeof(real_t)));
   CUDA_CHECK(cudaMalloc(&d_data.sigma, num_measurements * sizeof(real_t)));
   CUDA_CHECK(cudaMalloc(&d_data.buckets, num_buckets * 3 * sizeof(int)));
-  CUDA_CHECK(cudaMalloc(&d_data.seed_theta, num_buckets * sizeof(real_t)));
-  CUDA_CHECK(cudaMalloc(&d_data.seed_phi, num_buckets * sizeof(real_t)));
-  CUDA_CHECK(cudaMalloc(&d_data.seed_x0, num_buckets * sizeof(real_t)));
-  CUDA_CHECK(cudaMalloc(&d_data.seed_y0, num_buckets * sizeof(real_t)));
+  CUDA_CHECK(cudaMalloc(&d_data.theta, num_buckets * sizeof(real_t)));
+  CUDA_CHECK(cudaMalloc(&d_data.phi, num_buckets * sizeof(real_t)));
+  CUDA_CHECK(cudaMalloc(&d_data.x0, num_buckets * sizeof(real_t)));
+  CUDA_CHECK(cudaMalloc(&d_data.y0, num_buckets * sizeof(real_t)));
 
   // Copy data to device
   CUDA_CHECK(cudaMemcpy(d_data.sensor_pos_x, h_data.sensor_pos_x,
@@ -393,13 +396,13 @@ Data copy_to_device(const Data &h_data, int num_measurements, int num_buckets) {
 }
 
 void copy_results_to_host(Data &h_data, const Data &d_data, int num_buckets) {
-  CUDA_CHECK(cudaMemcpy(h_data.seed_theta, d_data.seed_theta,
+  CUDA_CHECK(cudaMemcpy(h_data.theta, d_data.theta,
                         num_buckets * sizeof(real_t), cudaMemcpyDeviceToHost));
-  CUDA_CHECK(cudaMemcpy(h_data.seed_phi, d_data.seed_phi,
+  CUDA_CHECK(cudaMemcpy(h_data.phi, d_data.phi,
                         num_buckets * sizeof(real_t), cudaMemcpyDeviceToHost));
-  CUDA_CHECK(cudaMemcpy(h_data.seed_x0, d_data.seed_x0,
+  CUDA_CHECK(cudaMemcpy(h_data.x0, d_data.x0,
                         num_buckets * sizeof(real_t), cudaMemcpyDeviceToHost));
-  CUDA_CHECK(cudaMemcpy(h_data.seed_y0, d_data.seed_y0,
+  CUDA_CHECK(cudaMemcpy(h_data.y0, d_data.y0,
                         num_buckets * sizeof(real_t), cudaMemcpyDeviceToHost));
 }
 
@@ -410,10 +413,10 @@ void cleanup_host(Data &h_data) {
   delete[] h_data.drift_radius;
   delete[] h_data.sigma;
   delete[] h_data.buckets;
-  delete[] h_data.seed_theta;
-  delete[] h_data.seed_phi;
-  delete[] h_data.seed_x0;
-  delete[] h_data.seed_y0;
+  delete[] h_data.theta;
+  delete[] h_data.phi;
+  delete[] h_data.x0;
+  delete[] h_data.y0;
 }
 
 void cleanup_device(Data &d_data) {
@@ -423,10 +426,10 @@ void cleanup_device(Data &d_data) {
   cudaFree(d_data.drift_radius);
   cudaFree(d_data.sigma);
   cudaFree(d_data.buckets);
-  cudaFree(d_data.seed_theta);
-  cudaFree(d_data.seed_phi);
-  cudaFree(d_data.seed_x0);
-  cudaFree(d_data.seed_y0);
+  cudaFree(d_data.theta);
+  cudaFree(d_data.phi);
+  cudaFree(d_data.x0);
+  cudaFree(d_data.y0);
 }
 
 bool benchmark_seed_line_with_duplicate_data() {
@@ -446,7 +449,7 @@ bool benchmark_seed_line_with_duplicate_data() {
   auto start_setup = std::chrono::high_resolution_clock::now();
 
   // Set up buckets based on CSV data structure
-  int duplications = 10000000; // Number of duplications for each volume
+  int duplications = DUPLICATIONS; // Number of duplications for each volume
   setup_buckets_from_csv(h_data, mdt_filename, rpc_filename, event_id,
                          volume_ids, duplications);
 
@@ -487,15 +490,22 @@ bool benchmark_seed_line_with_duplicate_data() {
 
   // Launch kernel with timing
   const int warpSize = 32;
-  const int cg_group_size = 16; // Use 16 threads per warp for cooperative groups
+  const int cg_group_size =
+      16; // Use 16 threads per warp for cooperative groups
   const int warps_per_block = 10;
   const int block_size = warpSize * warps_per_block;
-  const int num_blocks = num_buckets / (warps_per_block * (warpSize / cg_group_size)) + 
-                         (num_buckets % (warps_per_block * (warpSize / cg_group_size)) == 0 ? 0 : 1);
+  const int num_blocks =
+      num_buckets / (warps_per_block * (warpSize / cg_group_size)) +
+      (num_buckets % (warps_per_block * (warpSize / cg_group_size)) == 0 ? 0
+                                                                         : 1);
 
   // Warm up run (optional - helps with consistent timing)
   seed_lines<<<num_blocks, block_size>>>(&d_data, num_buckets);
   CUDA_CHECK(cudaDeviceSynchronize());
+  CUDA_CHECK(cudaGetLastError());
+  fit_lines<<<num_blocks, block_size>>>(&d_data, num_buckets);
+  CUDA_CHECK(cudaDeviceSynchronize());
+  CUDA_CHECK(cudaGetLastError());
 
   // Timed runs
   const int num_runs = 10; // Run multiple times for better statistics
@@ -506,6 +516,7 @@ bool benchmark_seed_line_with_duplicate_data() {
   for (int run = 0; run < num_runs; run++) {
     CUDA_CHECK(cudaEventRecord(kernel_start, 0));
     seed_lines<<<num_blocks, block_size>>>(&d_data, num_buckets);
+    fit_lines<<<num_blocks, block_size>>>(&d_data, num_buckets);
     CUDA_CHECK(cudaEventRecord(kernel_end, 0));
     CUDA_CHECK(cudaEventSynchronize(kernel_end));
 

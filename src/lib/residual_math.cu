@@ -14,14 +14,14 @@ namespace residualMath {
 // TODO: Refactor the same way as delta residuals is structured
 __device__ void compute_residual(line_t &line, const Vector3 &K,
                                  const Vector3 &W, const real_t drift_radius,
-                                 const int tid,
-                                 const int num_mdt_measurements,
+                                 const int tid, const int num_mdt_measurements,
                                  const int num_rpc_measurements,
                                  residual_cache_t &residual_cache) {
 
   real_t yz_res = 0.0f;
   if (tid < num_mdt_measurements) {
-    yz_res = abs(K.cross(line.D_ortho).dot(W)) - drift_radius;
+    yz_res = abs(K.cross(line.D_ortho).dot(W));
+    yz_res -= drift_radius;
   }
 
   residual_cache.yz_residual_sign = (yz_res < 0.0f) ? -1.0f : 1.0f;
@@ -84,9 +84,11 @@ __device__ void compute_dd_residuals(line_t &line, const int tid,
                                      const int num_rpc_measurements,
                                      const Vector3 &K, const Vector3 &W,
                                      residual_cache_t &residual_cache) {
-  for (int i = 0; i < 4; i++) {
+  // Zero out all delta delta residuals
+  for (int i = 0; i < 3; i++) {
     residual_cache.dd_residual[i] = 0.0f;
   }
+
   const real_t sign = residual_cache.yz_residual_sign;
 
   if (tid < num_mdt_measurements) {
@@ -106,7 +108,7 @@ __device__ real_t get_chi2(cg::thread_block_tile<MAX_MPB> &bucket_tile,
   real_t residual = residual_cache.residual;
   real_t chi_val = residual * residual * inverse_sigma_squared;
 
-  for (int i = warpSize / 2; i >= 1; i /= 2) {
+  for (int i = bucket_tile.num_threads() / 2; i >= 1; i /= 2) {
     bucket_tile.sync();
     chi_val += bucket_tile.shfl_down(chi_val, i);
   }
@@ -116,10 +118,73 @@ __device__ real_t get_chi2(cg::thread_block_tile<MAX_MPB> &bucket_tile,
 }
 
 __device__ Vector4 get_gradient(cg::thread_block_tile<16> &bucket_tile,
-                                Data *data, line_t &line,
-                                residual_cache_t &residual_cache,
-                                int bucket_start, int rpc_start,
-                                int bucket_end) {
+                                real_t inverse_sigma_squared,
+                                residual_cache_t &residual_cache) {
   Vector4 gradient = {0.0f, 0.0f, 0.0f, 0.0f};
+  for (int i = 0; i < 4; i++) {
+    gradient[i] = 2 * inverse_sigma_squared * residual_cache.residual *
+                  residual_cache.delta_residual[i];
+  }
+
+  for (int i = bucket_tile.num_threads() / 2; i >= 1; i /= 2) {
+    bucket_tile.sync();
+    for (int j = 0; j < 4; j++) {
+      gradient[j] += bucket_tile.shfl_down(gradient[j], i);
+    }
+  }
+
+  if(bucket_tile.thread_rank() == 0) {
+    printf("Gradient: | %f |\n"
+           "          | %f |\n"
+           "          | %f |\n"
+           "          | %f |\n",
+           gradient[0], gradient[1], gradient[2], gradient[3]);
+  }
+
+  return gradient;
+}
+
+__device__ real_t get_delta_delta_residual(int param1_idx, int param2_idx,
+                                           residual_cache_t &residual_cache) {
+  if (param1_idx == Y0 || param2_idx == Y0 || param1_idx == X0 ||
+      param2_idx == X0) {
+    return 0;
+  } else if (param1_idx == THETA && param2_idx == THETA) {
+    return residual_cache.dd_residual[DD_THETA_THETA];
+  } else if (param1_idx == PHI && param2_idx == PHI) {
+    return residual_cache.dd_residual[DD_PHI_PHI];
+  } else {
+    return residual_cache.dd_residual[DD_THETA_PHI]; // Mixed derivative
+  }
+}
+
+__device__ Matrix4 get_hessian(cg::thread_block_tile<16> &bucket_tile,
+                               real_t inverse_sigma_squared,
+                               residual_cache_t &residual_cache) {
+  Matrix4 hessian = Matrix4::Zero();
+
+  for (int i = 0; i < 4; i++) {
+    for (int j = 0; j < 4; j++) {
+      if (j >= i) {
+        hessian(i, j) = 2 * inverse_sigma_squared *
+                        (residual_cache.delta_residual[i] *
+                             residual_cache.delta_residual[j] +
+                         get_delta_delta_residual(i, j, residual_cache));
+        hessian(j, i) = hessian(i, j); // Symmetric matrix
+      }
+    }
+  }
+
+  for (int i = bucket_tile.num_threads() / 2; i >= 1; i /= 2) {
+    bucket_tile.sync();
+    for (int j = 0; j < 4; j++) {
+      for (int k = j; k < 4; k++) {
+        hessian(j, k) += bucket_tile.shfl_down(hessian(j, k), i);
+        hessian(k, j) = hessian(j, k); // Ensure symmetry
+      }
+    }
+  }
+
+  return hessian;
 }
 } // namespace residualMath

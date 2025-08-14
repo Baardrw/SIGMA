@@ -24,8 +24,8 @@ find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 
 # Set compiler flags
 # Set compiler flags
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -O3")
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3 --ptxas-options -v --expt-relaxed-constexpr -diag-suppress=20015 -diag-suppress=20012")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -fmad=false --expt-relaxed-constexpr -diag-suppress=20015 -diag-suppress=20012")
 
 set(CMAKE_CUDA_ARCHITECTURES 90)
 
@@ -41,6 +41,7 @@ set(SIGMA_LIB_SOURCES
     src/lib/muon_segment.cu
     src/lib/residual_math.cu
     src/lib/line_math.cu
+    src/lib/matrix_math.cu
 )
 
 # Library header files
@@ -50,6 +51,7 @@ set(SIGMA_LIB_HEADERS
     include/residual_math.h
     include/data_structures.h
     include/line_math.h
+    include/matrix_math.h
 )
 
 # Create the reusable library

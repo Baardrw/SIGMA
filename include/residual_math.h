@@ -50,16 +50,19 @@ __device__ void compute_dd_residuals(line_t &line, const int tid,
                                      const Vector3 &K, const Vector3 &W,
                                      residual_cache_t &residual_cache);
 
+/**
+  * Computes the gradient vector for the line via a shfl_down reduction
+  * across the threads in the bucket_tile.
+  * 
+  * WARNING: the gradient is only valid in thread 0 of the bucket_tile.
+  */
 __device__ Vector4 get_gradient(cg::thread_block_tile<16> &bucket_tile,
-                                Data *data, line_t &line,
-                                residual_cache_t &residual_cache,
-                                int bucket_start, int rpc_start,
-                                int bucket_end);
+                                real_t inverse_sigma_squared,
+                                residual_cache_t &residual_cache);
 
 __device__ Matrix4 get_hessian(cg::thread_block_tile<16> &bucket_tile,
-                               Data *data, line_t &line,
-                               residual_cache_t &residual_cache,
-                               int bucket_start, int rpc_start, int bucket_end);
+                               real_t inverse_sigma_squared,
+                               residual_cache_t &residual_cache);
 
 /**
  * Computes the chi2 for the line given the measurements in the bucket

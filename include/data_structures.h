@@ -52,10 +52,16 @@ struct Data {
                 // beyond the last real bucket
 
   // Seeds:
-  real_t *seed_x0;
-  real_t *seed_y0;
-  real_t *seed_phi;
-  real_t *seed_theta;
+  real_t *x0;
+  real_t *y0;
+  real_t *phi;
+  real_t *theta;
+
+  // Fitted lines:
+  real_t *fitted_x0;
+  real_t *fitted_y0;
+  real_t *fitted_phi;
+  real_t *fitted_theta;
 };
 
 enum {

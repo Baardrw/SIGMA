@@ -18,6 +18,7 @@
 
 // Forward declaration of the kernel we want to test
 __global__ void seed_lines(struct Data *data, int num_buckets);
+__global__ void fit_lines(struct Data *data, int num_buckets);
 
 // Helper function to check CUDA errors
 #define CUDA_CHECK(call)                                                       \
@@ -80,18 +81,18 @@ std::vector<MDTHit> read_mdt_csv(const std::string &filename,
       continue;
 
     MDTHit hit;
-    hit.surface_pos_x = std::stof(columns[0]);
-    hit.surface_pos_y = std::stof(columns[1]);
-    hit.surface_pos_z = std::stof(columns[2]);
-    hit.hit_pos_x = std::stof(columns[3]);
-    hit.hit_pos_y = std::stof(columns[4]);
-    hit.hit_pos_z = std::stof(columns[5]);
-    hit.poca_x = std::stof(columns[6]);
-    hit.poca_y = std::stof(columns[7]);
-    hit.poca_z = std::stof(columns[8]);
-    hit.hit_dir_x = std::stof(columns[9]);
-    hit.hit_dir_y = std::stof(columns[10]);
-    hit.hit_dir_z = std::stof(columns[11]);
+    hit.surface_pos_x = std::stod(columns[0]);
+    hit.surface_pos_y = std::stod(columns[1]);
+    hit.surface_pos_z = std::stod(columns[2]);
+    hit.hit_pos_x = std::stod(columns[3]);
+    hit.hit_pos_y = std::stod(columns[4]);
+    hit.hit_pos_z = std::stod(columns[5]);
+    hit.poca_x = std::stod(columns[6]);
+    hit.poca_y = std::stod(columns[7]);
+    hit.poca_z = std::stod(columns[8]);
+    hit.hit_dir_x = std::stod(columns[9]);
+    hit.hit_dir_y = std::stod(columns[10]);
+    hit.hit_dir_z = std::stod(columns[11]);
     hit.event_id = std::stoi(columns[12]);
     hit.volume_id = std::stoi(columns[13]);
 
@@ -313,10 +314,10 @@ void setup_buckets_from_csv(Data &h_data, const std::string &mdt_filename,
 
   // Allocate bucket arrays
   h_data.buckets = new int[num_buckets * 3];
-  h_data.seed_theta = new real_t[num_buckets];
-  h_data.seed_phi = new real_t[num_buckets];
-  h_data.seed_x0 = new real_t[num_buckets];
-  h_data.seed_y0 = new real_t[num_buckets];
+  h_data.theta = new real_t[num_buckets];
+  h_data.phi = new real_t[num_buckets];
+  h_data.x0 = new real_t[num_buckets];
+  h_data.y0 = new real_t[num_buckets];
 
   int running_total = 0;
 
@@ -334,10 +335,10 @@ void setup_buckets_from_csv(Data &h_data, const std::string &mdt_filename,
     running_total += mdt_count + rpc_count;
 
     // Initialize output arrays
-    h_data.seed_theta[i] = 0.0f;
-    h_data.seed_phi[i] = 0.0f;
-    h_data.seed_x0[i] = 0.0f;
-    h_data.seed_y0[i] = 0.0f;
+    h_data.theta[i] = 0.0f;
+    h_data.phi[i] = 0.0f;
+    h_data.x0[i] = 0.0f;
+    h_data.y0[i] = 0.0f;
 
     std::cout << "Bucket " << i << " (Volume " << volume_id << "): "
               << "start=" << h_data.buckets[i * 3 + 0]
@@ -360,10 +361,10 @@ Data copy_to_device(const Data &h_data, int num_measurements, int num_buckets) {
       cudaMalloc(&d_data.drift_radius, num_measurements * sizeof(real_t)));
   CUDA_CHECK(cudaMalloc(&d_data.sigma, num_measurements * sizeof(real_t)));
   CUDA_CHECK(cudaMalloc(&d_data.buckets, num_buckets * 3 * sizeof(int)));
-  CUDA_CHECK(cudaMalloc(&d_data.seed_theta, num_buckets * sizeof(real_t)));
-  CUDA_CHECK(cudaMalloc(&d_data.seed_phi, num_buckets * sizeof(real_t)));
-  CUDA_CHECK(cudaMalloc(&d_data.seed_x0, num_buckets * sizeof(real_t)));
-  CUDA_CHECK(cudaMalloc(&d_data.seed_y0, num_buckets * sizeof(real_t)));
+  CUDA_CHECK(cudaMalloc(&d_data.theta, num_buckets * sizeof(real_t)));
+  CUDA_CHECK(cudaMalloc(&d_data.phi, num_buckets * sizeof(real_t)));
+  CUDA_CHECK(cudaMalloc(&d_data.x0, num_buckets * sizeof(real_t)));
+  CUDA_CHECK(cudaMalloc(&d_data.y0, num_buckets * sizeof(real_t)));
 
   // Copy data to device
   CUDA_CHECK(cudaMemcpy(d_data.sensor_pos_x, h_data.sensor_pos_x,
@@ -388,13 +389,13 @@ Data copy_to_device(const Data &h_data, int num_measurements, int num_buckets) {
 }
 
 void copy_results_to_host(Data &h_data, const Data &d_data, int num_buckets) {
-  CUDA_CHECK(cudaMemcpy(h_data.seed_theta, d_data.seed_theta,
+  CUDA_CHECK(cudaMemcpy(h_data.theta, d_data.theta,
                         num_buckets * sizeof(real_t), cudaMemcpyDeviceToHost));
-  CUDA_CHECK(cudaMemcpy(h_data.seed_phi, d_data.seed_phi,
+  CUDA_CHECK(cudaMemcpy(h_data.phi, d_data.phi,
                         num_buckets * sizeof(real_t), cudaMemcpyDeviceToHost));
-  CUDA_CHECK(cudaMemcpy(h_data.seed_x0, d_data.seed_x0,
+  CUDA_CHECK(cudaMemcpy(h_data.x0, d_data.x0,
                         num_buckets * sizeof(real_t), cudaMemcpyDeviceToHost));
-  CUDA_CHECK(cudaMemcpy(h_data.seed_y0, d_data.seed_y0,
+  CUDA_CHECK(cudaMemcpy(h_data.y0, d_data.y0,
                         num_buckets * sizeof(real_t), cudaMemcpyDeviceToHost));
 }
 
@@ -405,10 +406,10 @@ void cleanup_host(Data &h_data) {
   delete[] h_data.drift_radius;
   delete[] h_data.sigma;
   delete[] h_data.buckets;
-  delete[] h_data.seed_theta;
-  delete[] h_data.seed_phi;
-  delete[] h_data.seed_x0;
-  delete[] h_data.seed_y0;
+  delete[] h_data.theta;
+  delete[] h_data.phi;
+  delete[] h_data.x0;
+  delete[] h_data.y0;
 }
 
 void cleanup_device(Data &d_data) {
@@ -418,10 +419,10 @@ void cleanup_device(Data &d_data) {
   cudaFree(d_data.drift_radius);
   cudaFree(d_data.sigma);
   cudaFree(d_data.buckets);
-  cudaFree(d_data.seed_theta);
-  cudaFree(d_data.seed_phi);
-  cudaFree(d_data.seed_x0);
-  cudaFree(d_data.seed_y0);
+  cudaFree(d_data.theta);
+  cudaFree(d_data.phi);
+  cudaFree(d_data.x0);
+  cudaFree(d_data.y0);
 }
 
 bool test_seed_lines_csv() {
@@ -465,6 +466,9 @@ bool test_seed_lines_csv() {
   seed_lines<<<num_blocks, block_size>>>(&d_data, num_buckets);
   CUDA_CHECK(cudaDeviceSynchronize());
   CUDA_CHECK(cudaGetLastError());
+  fit_lines<<<num_blocks, block_size>>>(&d_data, num_buckets);
+  CUDA_CHECK(cudaDeviceSynchronize());
+  CUDA_CHECK(cudaGetLastError());
 
   // Copy results back
   copy_results_to_host(h_data, d_data, num_buckets);
@@ -473,10 +477,10 @@ bool test_seed_lines_csv() {
   std::cout << "\nResults:" << std::endl;
   for (int i = 0; i < num_buckets; i++) {
     std::cout << "Bucket " << i << " (Volume " << volume_ids[i] << "): "
-              << "phi=" << std::setprecision(6) << h_data.seed_phi[i]
-              << ", theta=" << std::setprecision(6) << h_data.seed_theta[i]
-              << ", x0=" << std::setprecision(6) << h_data.seed_x0[i]
-              << ", y0=" << std::setprecision(6) << h_data.seed_y0[i]
+              << "phi=" << std::setprecision(6) << h_data.phi[i]
+              << ", theta=" << std::setprecision(6) << h_data.theta[i]
+              << ", x0=" << std::setprecision(6) << h_data.x0[i]
+              << ", y0=" << std::setprecision(6) << h_data.y0[i]
               << std::endl;
   }
 
