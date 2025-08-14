@@ -68,11 +68,11 @@ __global__ void seed_lines(struct Data *data, int num_buckets) {
   initialize_bucket_indexing(data, bucket_index, bucket_start, rpc_start,
                              bucket_end);
 
-  const int thread_data_index = bucket_start + bucket_tile.thread_rank();
+  int thread_data_index = bucket_start + bucket_tile.thread_rank();
   if (thread_data_index >= bucket_end) {
-    return; // No data for this thread
+    thread_data_index = bucket_end - 1; // Ensure valid index
   }
-
+  
   // Line params
   real_t phi = 0.0f;
   real_t theta[4];
@@ -130,12 +130,13 @@ __global__ void seed_lines(struct Data *data, int num_buckets) {
 
   // Constants used by residual calculations
   const Vector3 sensor_pos = SENSOR_POS(data, thread_data_index);
-  const Vector3 W = {W_components[0], W_components[1], W_components[2]};
   const real_t drift_radius = DRIFT_RADIUS(data, thread_data_index);
+  const real_t sigma = SIGMA(data, thread_data_index);
+
+  const Vector3 W = {W_components[0], W_components[1], W_components[2]};
   const int num_mdt_measurements = rpc_start - bucket_start;
   const int num_rpc_measurements = bucket_end - rpc_start;
-  const int inverse_sigma_squared =
-      INVERSE_SIGMA_SQUARE(data, thread_data_index);
+  const real_t inverse_sigma_squared = 1.0f / (sigma * sigma);
 
   real_t chi2_arr[4];
   for (int j = 0; j < 4; j++) {
@@ -143,8 +144,7 @@ __global__ void seed_lines(struct Data *data, int num_buckets) {
     line_t line;
 
     lineMath::create_line(x0[j], y0[j], phi, theta[j], line);
-    lineMath::compute_D_ortho(
-        line, {W_components[0], W_components[1], W_components[2]});
+    lineMath::compute_D_ortho(line, W);
 
     Vector3 K = sensor_pos - line.S0;
 
@@ -211,8 +211,8 @@ __global__ void fit_line(struct Data *data, int num_buckets) {
   const real_t drift_radius = DRIFT_RADIUS(data, thread_data_index);
   const int num_mdt_measurements = rpc_start - bucket_start;
   const int num_rpc_measurements = bucket_end - rpc_start;
-  const int inverse_sigma_squared =
-      INVERSE_SIGMA_SQUARE(data, thread_data_index);
+  const real_t sigma = SIGMA(data, thread_data_index);
+  const real_t inverse_sigma_squared = 1.0f / (sigma * sigma);
 
   residual_cache_t residual_cache;
   for (int j = 0; j < 1000; j++) {
@@ -228,11 +228,11 @@ __global__ void fit_line(struct Data *data, int num_buckets) {
     residualMath::compute_delta_residuals(
         line, bucket_tile.thread_rank(), num_mdt_measurements,
         num_rpc_measurements, K, W, residual_cache);
-    
+
     residualMath::compute_dd_residuals(
         line, bucket_tile.thread_rank(), num_mdt_measurements,
         num_rpc_measurements, K, W, residual_cache);
-    
+
     // All residuals data is now stored in the residual_cache
 
     Vector4 gradient =

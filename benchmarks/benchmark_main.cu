@@ -488,7 +488,7 @@ bool benchmark_seed_line_with_duplicate_data() {
   // Launch kernel with timing
   const int warpSize = 32;
   const int cg_group_size = 16; // Use 16 threads per warp for cooperative groups
-  const int warps_per_block = 5;
+  const int warps_per_block = 10;
   const int block_size = warpSize * warps_per_block;
   const int num_blocks = num_buckets / (warps_per_block * (warpSize / cg_group_size)) + 
                          (num_buckets % (warps_per_block * (warpSize / cg_group_size)) == 0 ? 0 : 1);
