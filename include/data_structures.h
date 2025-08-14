@@ -19,6 +19,12 @@
 #define RPC_HIT_POS(data, i) EIGEN_VEC3(data, rpc_hit, i)
 #define RPC_NORMAL(data, i) EIGEN_VEC3(data, rpc_normal, i)
 
+#define INVERSE_SIGMA_SQUARE(data, i) \
+  (1.0f / ((data)->sigma[i] * (data)->sigma[i]))
+#define DRIFT_RADIUS(data, i) \
+  (data)->drift_radius[i]
+
+
 struct Data {
   real_t *sensor_pos_x;
   real_t *sensor_pos_y;

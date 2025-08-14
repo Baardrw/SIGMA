@@ -54,16 +54,24 @@ initialize_bucket_indexing(struct Data *data, int bucket_index,
 }
 
 __global__ void seed_lines(struct Data *data, int num_buckets) {
-  unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
-  int bucket_index = i / MAX_MPB;
-  if (bucket_index >= num_buckets)
+  unsigned int global_thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+  int bucket_index = global_thread_id / MAX_MPB;
+
+  if (bucket_index >= num_buckets) {
     return;
+  }
 
   cg::thread_block_tile<MAX_MPB> bucket_tile =
       cg::tiled_partition<MAX_MPB>(cg::this_thread_block());
+
   int bucket_start, rpc_start, bucket_end;
   initialize_bucket_indexing(data, bucket_index, bucket_start, rpc_start,
                              bucket_end);
+
+  const int thread_data_index = bucket_start + bucket_tile.thread_rank();
+  if (thread_data_index >= bucket_end) {
+    return; // No data for this thread
+  }
 
   // Line params
   real_t phi = 0.0f;
@@ -71,11 +79,12 @@ __global__ void seed_lines(struct Data *data, int num_buckets) {
   real_t x0[4];
   real_t y0[4];
 
+  // ================ Line params ================
+
   if (bucket_tile.thread_rank() == 0) {
     estimate_phi(data, rpc_start, bucket_end, phi);
   }
 
-  // Synchronize to ensure phi is set before proceeding7
   bucket_tile.sync();
   phi = bucket_tile.shfl(phi, 0);
 
@@ -117,25 +126,38 @@ __global__ void seed_lines(struct Data *data, int num_buckets) {
     y0[j] = bucket_tile.shfl(y0[j], j);
   }
 
+  // ================ Calculate Residuals ================
+
+  // Constants used by residual calculations
+  const Vector3 sensor_pos = SENSOR_POS(data, thread_data_index);
+  const Vector3 W = {W_components[0], W_components[1], W_components[2]};
+  const real_t drift_radius = DRIFT_RADIUS(data, thread_data_index);
+  const int num_mdt_measurements = rpc_start - bucket_start;
+  const int num_rpc_measurements = bucket_end - rpc_start;
+  const int inverse_sigma_squared =
+      INVERSE_SIGMA_SQUARE(data, thread_data_index);
+
   real_t chi2_arr[4];
   for (int j = 0; j < 4; j++) {
+    residual_cache_t residual_cache;
     line_t line;
+
     lineMath::create_line(x0[j], y0[j], phi, theta[j], line);
     lineMath::compute_D_ortho(
         line, {W_components[0], W_components[1], W_components[2]});
 
-    residual_cache_t residual_cache;
-    residualMath::compute_residual(data, line, bucket_tile.thread_rank(),
-                                   bucket_start, rpc_start, bucket_end,
-                                   residual_cache);
-    real_t chi2_val =
-        residualMath::get_chi2(bucket_tile, data, line, residual_cache,
-                               bucket_start, rpc_start, bucket_end);
+    Vector3 K = sensor_pos - line.S0;
+
+    residualMath::compute_residual(
+        line, K, W, drift_radius, bucket_tile.thread_rank(),
+        num_mdt_measurements, num_rpc_measurements, residual_cache);
+
+    real_t chi2_val = residualMath::get_chi2(bucket_tile, inverse_sigma_squared,
+                                             residual_cache);
     chi2_arr[j] = chi2_val;
   }
 
-  // Residuals are only valid for thread id 0
-
+  // Residuals are only valid for thread id 0, due to shuffle down sum
   if (bucket_tile.thread_rank() == 0) {
     // Store the best line parameters
     real_t min_residual = chi2_arr[0];
@@ -157,34 +179,61 @@ __global__ void seed_lines(struct Data *data, int num_buckets) {
 }
 
 __global__ void fit_line(struct Data *data, int num_buckets) {
-  unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
-  int bucket_index = i / MAX_MPB;
-  if (bucket_index >= num_buckets)
-    return;
+  // Initialize the thread block tile
+  unsigned int global_thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+  int bucket_index = global_thread_id / MAX_MPB;
 
-  extern __shared__ real_t s_data[];
+  if (bucket_index >= num_buckets) {
+    return;
+  }
 
   cg::thread_block_tile<MAX_MPB> bucket_tile =
       cg::tiled_partition<MAX_MPB>(cg::this_thread_block());
+
   int bucket_start, rpc_start, bucket_end;
   initialize_bucket_indexing(data, bucket_index, bucket_start, rpc_start,
                              bucket_end);
+
+  const int thread_data_index = bucket_start + bucket_tile.thread_rank();
+  if (thread_data_index >= bucket_end) {
+    return; // No data for this thread
+  }
+
+  // Initialize line parameters from seed
   line_t line;
   lineMath::create_line(
       data->seed_x0[bucket_index], data->seed_y0[bucket_index],
       data->seed_phi[bucket_index], data->seed_theta[bucket_index], line);
 
+  // Initialize constants
+  const Vector3 sensor_pos = SENSOR_POS(data, thread_data_index);
+  const Vector3 W = {W_components[0], W_components[1], W_components[2]};
+  const real_t drift_radius = DRIFT_RADIUS(data, thread_data_index);
+  const int num_mdt_measurements = rpc_start - bucket_start;
+  const int num_rpc_measurements = bucket_end - rpc_start;
+  const int inverse_sigma_squared =
+      INVERSE_SIGMA_SQUARE(data, thread_data_index);
+
   residual_cache_t residual_cache;
   for (int j = 0; j < 1000; j++) {
     // Update derivatives
-    lineMath::update_derivatives(
-        line, {W_components[0], W_components[1], W_components[2]});
-    residualMath::compute_residual(data, line, bucket_tile.thread_rank(),
-                                   bucket_start, rpc_start, bucket_end,
-                                   residual_cache);
-    residualMath::compute_delta_residuals(data, line, bucket_tile.thread_rank(),
-                                          bucket_start, rpc_start, bucket_end,
-                                          residual_cache);
+    lineMath::update_derivatives(line, W);
+    Vector3 K = sensor_pos - line.S0;
+
+    // ================ Compute Residuals and derivatives ================
+    residualMath::compute_residual(
+        line, K, W, drift_radius, bucket_tile.thread_rank(),
+        num_mdt_measurements, num_rpc_measurements, residual_cache);
+
+    residualMath::compute_delta_residuals(
+        line, bucket_tile.thread_rank(), num_mdt_measurements,
+        num_rpc_measurements, K, W, residual_cache);
+    
+    residualMath::compute_dd_residuals(
+        line, bucket_tile.thread_rank(), num_mdt_measurements,
+        num_rpc_measurements, K, W, residual_cache);
+    
+    // All residuals data is now stored in the residual_cache
 
     Vector4 gradient =
         residualMath::get_gradient(bucket_tile, data, line, residual_cache,

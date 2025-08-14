@@ -446,7 +446,7 @@ bool benchmark_seed_line_with_duplicate_data() {
   auto start_setup = std::chrono::high_resolution_clock::now();
 
   // Set up buckets based on CSV data structure
-  int duplications = 1000; // Number of duplications for each volume
+  int duplications = 10000000; // Number of duplications for each volume
   setup_buckets_from_csv(h_data, mdt_filename, rpc_filename, event_id,
                          volume_ids, duplications);
 
