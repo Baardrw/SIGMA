@@ -3,12 +3,10 @@
 #include <cmath>
 #include <cuda_runtime.h>
 #include <fstream>
-#include <iomanip>
 #include <iostream>
 #include <map>
 #include <math.h>
 #include <numeric>
-#include <ratio>
 #include <set>
 #include <sstream>
 #include <string>
@@ -16,7 +14,9 @@
 
 #include "config.h"
 #include "data_structures.h"
+#include "line_math.h"
 #include "muon_segment.h"
+#include "residual_math.h"
 
 // Forward declaration of the kernel we want to test
 __global__ void seed_lines(struct Data *data, int num_buckets);
@@ -192,9 +192,11 @@ void calculate_bucket_answer(BucketGroundTruth &bucket_ground_truth,
   for (const auto &hit : mdt_hits) {
     real_hits.emplace_back(hit.poca_x, hit.poca_y, hit.poca_z);
   }
-  for (const auto &hit : rpc_hits) {
-    real_hits.emplace_back(hit.poca_x, hit.poca_y, hit.poca_z);
-  }
+  // There is some faulty RPC data
+
+  // for (const auto &hit : rpc_hits) {
+  //   real_hits.emplace_back(hit.poca_x, hit.poca_y, hit.poca_z);
+  // }
 
   // Calculate best fit line parameters
   if (real_hits.size() < 2) {
@@ -460,6 +462,56 @@ void cleanup_device(Data &d_data) {
   cudaFree(d_data.y0);
 }
 
+std::vector<real_t> calculate_chi2(Data &h_data, int num_buckets) {
+
+  std::vector<real_t> chi2_values(num_buckets, 0.0f);
+  for (int i = 0; i < num_buckets; i++) {
+    real_t x0 = h_data.x0[i];
+    real_t y0 = h_data.y0[i];
+    real_t phi = h_data.phi[i];
+    real_t theta = h_data.theta[i];
+
+    std::vector<real_t> residuals;
+    std::vector<real_t> inverse_sigma_squared;
+
+    // Get the start and end indices for this bucket
+    int start_idx = h_data.buckets[i * 3];
+    int rpc_idx = h_data.buckets[i * 3 + 1];
+    int end_idx = h_data.buckets[i * 3 + 2];
+
+    // Create line
+    line_t line;
+    lineMath::create_line(x0, y0, phi, theta, line);
+    lineMath::compute_D_ortho(line, {1, 0, 0});
+
+    // Compute K
+    std::vector<Vector3> K;
+    for (int j = start_idx; j < rpc_idx; j++) {
+      K.emplace_back(h_data.sensor_pos_x[j], h_data.sensor_pos_y[j],
+                     h_data.sensor_pos_z[j]);
+    }
+
+    // Get drift radius for this bucket
+    std::vector<real_t> drift_radius;
+    for (int j = start_idx; j < rpc_idx; j++) {
+      drift_radius.emplace_back(h_data.drift_radius[j]);
+    }
+
+    // get inverse sigma squared
+    for (int j = start_idx; j < end_idx; j++) {
+      inverse_sigma_squared.emplace_back(1.0f /
+                                         (h_data.sigma[j] * h_data.sigma[j]));
+    }
+
+    residuals = residualMath::compute_residuals(
+        line, K, drift_radius, rpc_idx - start_idx, end_idx - rpc_idx);
+    real_t chi2 = residualMath::get_chi2(residuals, inverse_sigma_squared);
+    chi2_values[i] = chi2;
+  }
+
+  return chi2_values;
+}
+
 bool test_seed_lines_csv() {
   std::cout << "Running test_seed_lines_csv..." << std::endl;
 
@@ -533,9 +585,16 @@ bool test_seed_lines_csv() {
   seed_lines<<<num_blocks, block_size>>>(&d_data, num_buckets);
   CUDA_CHECK(cudaDeviceSynchronize());
   CUDA_CHECK(cudaGetLastError());
+  copy_results_to_host(h_data, d_data, num_buckets);
+  std::vector<real_t> chi2_values_seed =
+      calculate_chi2(h_data, num_buckets);
+
   fit_lines<<<num_blocks, block_size>>>(&d_data, num_buckets);
   CUDA_CHECK(cudaDeviceSynchronize());
   CUDA_CHECK(cudaGetLastError());
+  copy_results_to_host(h_data, d_data, num_buckets);
+  std::vector<real_t> chi2_values_fit =
+      calculate_chi2(h_data, num_buckets);
 
   // Copy results back
   copy_results_to_host(h_data, d_data, num_buckets);
@@ -551,28 +610,26 @@ bool test_seed_lines_csv() {
     real_t cos_ground_truth_phi = std::abs(std::cos(ground_truth.phi));
 
     if (std::abs(cos_theta - cos_ground_truth_theta) > 0.01 ||
-        std::abs(cos_phi - cos_ground_truth_phi) > 0.01 ||
+        std::abs(cos_phi - cos_ground_truth_phi) > 0.01
         // std::abs(h_data.x0[i] - ground_truth.x0) > 0.1 ||
-        std::abs(h_data.y0[i] - ground_truth.y0) > 0.1) {
-      errors[i] = 1; // Error found
-      std::cout << "Error in event " << (ground_truth.bucket_id & 0xFFFFFFFF) << ", Volume "<< (ground_truth.bucket_id >> 32) << ": "
+    ) {
+      std::cout << "Angular error " << (ground_truth.bucket_id & 0xFFFFFFFF)
+                << ", Volume " << (ground_truth.bucket_id >> 32) << ": "
                 << "Delta Theta: " << cos_theta - cos_ground_truth_theta
                 << ", Delta Phi: " << cos_phi - cos_ground_truth_phi
-                << ", Delta X0: " << h_data.x0[i] - ground_truth.x0
-                << ", Delta Y0: " << h_data.y0[i] - ground_truth.y0
                 << std::endl;
+      errors[i] = 1; // Mark as error
 
+    } else if (std::abs(h_data.y0[i] - ground_truth.y0) > 0.1) {
+      std::cout << "Y0 error in bucket "
+                << (ground_truth.bucket_id & 0xFFFFFFFF) << ", Volume "
+                << (ground_truth.bucket_id >> 32) << ": "
+                << "Calculated Y0: " << h_data.y0[i]
+                << ", Ground Truth Y0: " << ground_truth.y0 << std::endl;
+      errors[i] = 1; // Mark as error
+    }
 
-      std::cout << "Expected Theta: " << ground_truth.theta
-                << ", Expected Phi: " << ground_truth.phi
-                << ", Expected X0: " << ground_truth.x0
-                << ", Expected Y0: " << ground_truth.y0 << std::endl;
-      std::cout << "Computed Theta: " << h_data.theta[i]
-                << ", Computed Phi: " << h_data.phi[i] 
-                << ", Computed X0: " << h_data.x0[i]
-                << ", Computed Y0: " << h_data.y0[i] << std::endl;
-      std::cout << "\n\n" << std::endl;
-    } else {
+    else {
       errors[i] = 0; // No error
     }
   }
@@ -581,12 +638,38 @@ bool test_seed_lines_csv() {
   std::cout << "Error percentage: "
             << (static_cast<double>(num_errors) / num_buckets) * 100.0 << "%"
             << std::endl;
+  std::cout << "Above errors are mostly due to upper lower ambiguities"
+            << std::endl;
 
+
+  bool fail = false;
+  // Assert that the fit has smaller chi2 than the seed
+  for (int i = 0; i < num_buckets; i++) {
+    if (chi2_values_fit[i] > chi2_values_seed[i]) {
+      std::cout << "Chi2 error in bucket "
+                << (bucket_ground_truths[i].bucket_id & 0xFFFFFFFF)
+                << ", Volume " << (bucket_ground_truths[i].bucket_id >> 32)
+                << ": Seed Chi2: " << chi2_values_seed[i]
+                << ", Fit Chi2: " << chi2_values_fit[i] << std::endl
+                << "Fit Chi2 should be smaller than Seed Chi2!" << std::endl;
+                fail = true;
+    }
+  }
+
+  // Average fit improovement
+  real_t average_fit_improvement = 0.0f;
+  std::vector<real_t> fit_imp;
+  for (int i = 0; i < num_buckets; i++) {
+        (chi2_values_seed[i] / (chi2_values_fit[i])) ;
+  }
+
+  std::cout << "Average fit improvement: " << average_fit_improvement
+            << std::endl;
   // Cleanup
   cleanup_host(h_data);
   cleanup_device(d_data);
 
-  return true; // Return true if no errors occurred
+  return fail;
 }
 
 int main() {

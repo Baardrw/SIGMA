@@ -3,6 +3,8 @@
 #include "line_math.h"
 #include "residual_math.h"
 
+#include <vector>
+
 using namespace cooperative_groups;
 namespace cg = cooperative_groups;
 
@@ -12,6 +14,23 @@ namespace residualMath {
 
 // ================ Residuals ================
 // TODO: Refactor the same way as delta residuals is structured
+
+__host__ std::vector<real_t> compute_residuals(line_t &line,
+                                               const std::vector<Vector3> &K,
+                                               const std::vector<real_t> &drift_radius,
+                                               const int num_mdt_measurements,
+                                               const int num_rpc_measurements) {
+
+  std::vector<real_t> residuals(num_mdt_measurements + num_rpc_measurements,
+                                0.0f);
+  Vector3 W(W_components[0], W_components[1], W_components[2]);
+  for (int i = 0; i < num_mdt_measurements; i++) {
+    real_t cross_product = K[i].cross(line.D_ortho).dot(W);
+    residuals[i] = abs(cross_product) - drift_radius[i];
+  }
+
+  return residuals;
+}
 __device__ void compute_residual(line_t &line, const Vector3 &K,
                                  const Vector3 &W, const real_t drift_radius,
                                  const int tid, const int num_mdt_measurements,
@@ -101,6 +120,15 @@ __device__ void compute_dd_residuals(line_t &line, const int tid,
 }
 
 // ================ Chi2 ================
+__host__ real_t get_chi2(const std::vector<real_t> &residuals,
+                         const std::vector<real_t> &inverse_sigma_squared) {
+  real_t chi2 = 0.0f;
+  for (size_t i = 0; i < residuals.size(); i++) {
+    chi2 += residuals[i] * residuals[i] * inverse_sigma_squared[i];
+  }
+  return chi2;
+}
+
 template <unsigned int TILE_SIZE>
 __device__ real_t get_chi2(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
                            real_t inverse_sigma_squared,

@@ -18,6 +18,12 @@ typedef struct {
 
 namespace residualMath {
 
+__host__ std::vector<real_t> compute_residuals(line_t &line,
+                                               const std::vector<Vector3> &K,
+                                               const std::vector<real_t> &drift_radius,
+                                               const int num_mdt_measurements,
+                                               const int num_rpc_measurements);
+
 /**
  * Computes the residuals for all measurements in the bucket.
  * Stores the residual in the residual_cache.
@@ -66,12 +72,13 @@ __device__ Matrix4 get_hessian(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
                                real_t inverse_sigma_squared,
                                residual_cache_t &residual_cache);
 
+__host__ real_t get_chi2(const std::vector<real_t> &residuals,
+                         const std::vector<real_t> &inverse_sigma_squared);
 /**
  * Computes the chi2 for the line given the measurements in the bucket
  *
  * @returns Chi2 value for the line, ONLY ON THREAD 0
  */
-
 template <unsigned int TILE_SIZE>
 __device__ real_t get_chi2(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
                            real_t inverse_sigma_squared,
