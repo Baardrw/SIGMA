@@ -3,9 +3,12 @@
 #include <vector_types.h>
 #include <Eigen/Dense>
 
+// #define DEBUG 1
+
 #define EPSILON 1e-6
 #define FULL_MASK 0xffffffff
 #define MAX_MPB 16 // Max measurements per bucket
+#define OVERFLOW_TILE_SIZE 32 // Amount of threads needed to handle overflowing buckets
 
 typedef double real_t;
 typedef double3 real3_t;

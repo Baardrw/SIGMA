@@ -19,7 +19,7 @@
 #include "data_structures.h"
 #include "muon_segment.h"
 
-#define DUPLICATIONS 1000000
+#define DUPLICATIONS 10000
 
 // Forward declaration of the kernel we want to test
 __global__ void seed_lines(struct Data *data, int num_buckets);

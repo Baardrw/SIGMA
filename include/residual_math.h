@@ -51,16 +51,18 @@ __device__ void compute_dd_residuals(line_t &line, const int tid,
                                      residual_cache_t &residual_cache);
 
 /**
-  * Computes the gradient vector for the line via a shfl_down reduction
-  * across the threads in the bucket_tile.
-  * 
-  * WARNING: the gradient is only valid in thread 0 of the bucket_tile.
-  */
-__device__ Vector4 get_gradient(cg::thread_block_tile<16> &bucket_tile,
+ * Computes the gradient vector for the line via a shfl_down reduction
+ * across the threads in the bucket_tile.
+ *
+ * WARNING: the gradient is only valid in thread 0 of the bucket_tile.
+ */
+template <unsigned int TILE_SIZE>
+__device__ Vector4 get_gradient(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
                                 real_t inverse_sigma_squared,
                                 residual_cache_t &residual_cache);
 
-__device__ Matrix4 get_hessian(cg::thread_block_tile<16> &bucket_tile,
+template <unsigned int TILE_SIZE>
+__device__ Matrix4 get_hessian(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
                                real_t inverse_sigma_squared,
                                residual_cache_t &residual_cache);
 
@@ -69,7 +71,9 @@ __device__ Matrix4 get_hessian(cg::thread_block_tile<16> &bucket_tile,
  *
  * @returns Chi2 value for the line, ONLY ON THREAD 0
  */
-__device__ real_t get_chi2(cg::thread_block_tile<MAX_MPB> &bucket_tile,
+
+template <unsigned int TILE_SIZE>
+__device__ real_t get_chi2(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
                            real_t inverse_sigma_squared,
                            residual_cache_t &residual_cache);
 } // namespace residualMath

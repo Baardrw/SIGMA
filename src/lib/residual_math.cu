@@ -19,21 +19,21 @@ __device__ void compute_residual(line_t &line, const Vector3 &K,
                                  residual_cache_t &residual_cache) {
 
   real_t yz_res = 0.0f;
+  real_t cross_product = 0.0f;
   if (tid < num_mdt_measurements) {
-    yz_res = abs(K.cross(line.D_ortho).dot(W));
-    yz_res -= drift_radius;
+    cross_product = K.cross(line.D_ortho).dot(W);
+    yz_res = abs(cross_product) - drift_radius;
   }
 
-  residual_cache.yz_residual_sign = (yz_res < 0.0f) ? -1.0f : 1.0f;
+  residual_cache.yz_residual_sign = (cross_product < 0.0f) ? -1.0f : 1.0f;
   residual_cache.residual = yz_res;
 }
 
 // ================ Delta Residuals ================
 
 __device__ inline void
-compute_mdt_measurement_delta_residuals(line_t &line, const Vector3 K,
-                                        const Vector3 &W,
-                                        residual_cache_t &residual_cache) {
+compute_mdt_delta_residuals(line_t &line, const Vector3 K, const Vector3 &W,
+                            residual_cache_t &residual_cache) {
 
   // Shared data
   real_t sign = residual_cache.yz_residual_sign;
@@ -41,7 +41,7 @@ compute_mdt_measurement_delta_residuals(line_t &line, const Vector3 K,
   // ====== Intersection Residuals =====
 #pragma unroll
   for (int i = X0; i <= Y0; i++) {
-    Vector3 delta_K = -line.dS0[i];
+    Vector3 delta_K = -line.dS0[i - X0];
     residual_cache.delta_residual[i] +=
         sign * delta_K.cross(line.D_ortho).dot(W);
   }
@@ -70,10 +70,11 @@ __device__ void compute_delta_residuals(line_t &line, const int tid,
   }
 
   if (tid < num_mdt_measurements) {
-    compute_mdt_measurement_delta_residuals(line, K, W, residual_cache);
+    compute_mdt_delta_residuals(line, K, W, residual_cache);
   }
 
-  if (tid < num_rpc_measurements) {
+  if (num_mdt_measurements <= tid &&
+      tid < num_mdt_measurements + num_rpc_measurements) {
     compute_rpc_delta_residuals(line, tid, W, residual_cache);
   }
 }
@@ -100,7 +101,8 @@ __device__ void compute_dd_residuals(line_t &line, const int tid,
 }
 
 // ================ Chi2 ================
-__device__ real_t get_chi2(cg::thread_block_tile<MAX_MPB> &bucket_tile,
+template <unsigned int TILE_SIZE>
+__device__ real_t get_chi2(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
                            real_t inverse_sigma_squared,
                            residual_cache_t &residual_cache) {
   real_t chi2 = 0.0f;
@@ -117,7 +119,8 @@ __device__ real_t get_chi2(cg::thread_block_tile<MAX_MPB> &bucket_tile,
   return chi2;
 }
 
-__device__ Vector4 get_gradient(cg::thread_block_tile<16> &bucket_tile,
+template <unsigned int TILE_SIZE>
+__device__ Vector4 get_gradient(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
                                 real_t inverse_sigma_squared,
                                 residual_cache_t &residual_cache) {
   Vector4 gradient = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -131,14 +134,6 @@ __device__ Vector4 get_gradient(cg::thread_block_tile<16> &bucket_tile,
     for (int j = 0; j < 4; j++) {
       gradient[j] += bucket_tile.shfl_down(gradient[j], i);
     }
-  }
-
-  if(bucket_tile.thread_rank() == 0) {
-    printf("Gradient: | %f |\n"
-           "          | %f |\n"
-           "          | %f |\n"
-           "          | %f |\n",
-           gradient[0], gradient[1], gradient[2], gradient[3]);
   }
 
   return gradient;
@@ -158,7 +153,8 @@ __device__ real_t get_delta_delta_residual(int param1_idx, int param2_idx,
   }
 }
 
-__device__ Matrix4 get_hessian(cg::thread_block_tile<16> &bucket_tile,
+template <unsigned int TILE_SIZE>
+__device__ Matrix4 get_hessian(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
                                real_t inverse_sigma_squared,
                                residual_cache_t &residual_cache) {
   Matrix4 hessian = Matrix4::Zero();
@@ -187,4 +183,29 @@ __device__ Matrix4 get_hessian(cg::thread_block_tile<16> &bucket_tile,
 
   return hessian;
 }
+
+// Explicit template instantiations for linking
+template __device__ real_t get_chi2<16>(cg::thread_block_tile<16> &bucket_tile,
+                                        real_t inverse_sigma_squared,
+                                        residual_cache_t &residual_cache);
+
+template __device__ real_t get_chi2<32>(cg::thread_block_tile<32> &bucket_tile,
+                                        real_t inverse_sigma_squared,
+                                        residual_cache_t &residual_cache);
+
+template __device__ Vector4 get_gradient<16>(
+    cg::thread_block_tile<16> &bucket_tile, real_t inverse_sigma_squared,
+    residual_cache_t &residual_cache);
+
+template __device__ Vector4 get_gradient<32>(
+    cg::thread_block_tile<32> &bucket_tile, real_t inverse_sigma_squared,
+    residual_cache_t &residual_cache);
+
+template __device__ Matrix4
+get_hessian<16>(cg::thread_block_tile<16> &bucket_tile,
+                real_t inverse_sigma_squared, residual_cache_t &residual_cache);
+
+template __device__ Matrix4
+get_hessian<32>(cg::thread_block_tile<32> &bucket_tile,
+                real_t inverse_sigma_squared, residual_cache_t &residual_cache);
 } // namespace residualMath
