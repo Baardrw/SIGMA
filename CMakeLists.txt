@@ -99,11 +99,17 @@ if(BUILD_TESTS)
     
     add_executable(sigma_tests
         tests/test_gpu_kernels.cu
+        tests/test_math_utils.cu
+        tests/test_data_utils.cu
     )
     
-    # Tests link against the library, not the main executable
+    target_include_directories(sigma_tests PRIVATE
+        tests/                          
+    )
+    
+    # Tests link against the library
     target_link_libraries(sigma_tests
-        sigma_lib             # Use the library
+        sigma_lib             
         Threads::Threads
         Eigen3::Eigen
     )
