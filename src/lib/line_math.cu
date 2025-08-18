@@ -1,4 +1,5 @@
 #include "config.h"
+#include "data_structures.h"
 #include "line_math.h"
 
 namespace lineMath {
@@ -98,10 +99,10 @@ __host__ __device__ void create_line(real_t x0, real_t y0, real_t phi,
   line.S0 << x0, y0, 0.0;
 
   // Store parameters
-  line.params[0] = theta;
-  line.params[1] = phi;
-  line.params[2] = x0;
-  line.params[3] = y0;
+  line.params[THETA] = theta;
+  line.params[PHI] = phi;
+  line.params[X0] = x0;
+  line.params[Y0] = y0;
 }
 
 __host__ __device__ void update_derivatives(line_t &line,

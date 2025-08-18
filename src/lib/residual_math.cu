@@ -21,12 +21,11 @@ __host__ std::vector<real_t> compute_residuals(line_t &line,
                                                const int num_mdt_measurements,
                                                const int num_rpc_measurements) {
 
-  std::vector<real_t> residuals(num_mdt_measurements + num_rpc_measurements,
-                                0.0f);
-  Vector3 W(W_components[0], W_components[1], W_components[2]);
+  std::vector<real_t> residuals;
+  Vector3 W(1,0,0);
   for (int i = 0; i < num_mdt_measurements; i++) {
     real_t cross_product = K[i].cross(line.D_ortho).dot(W);
-    residuals[i] = abs(cross_product) - drift_radius[i];
+    residuals.push_back(abs(cross_product) - drift_radius[i]);
   }
 
   return residuals;

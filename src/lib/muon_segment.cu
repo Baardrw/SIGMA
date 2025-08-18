@@ -205,7 +205,7 @@ __device__ void fit_line_impl(struct Data *data, const int thread_data_index,
   const int num_rpc_measurements = bucket_end - rpc_start;
 
   // Newton-Raphson iteration
-  int iteration;
+  int iteration = 0;
   for (iteration = 0; iteration < 1000; iteration++) {
     line_t line;
     residual_cache_t residual_cache;
@@ -246,9 +246,7 @@ __device__ void fit_line_impl(struct Data *data, const int thread_data_index,
 
       Eigen::Matrix2f inverse_hessian;
       if (!matrixMath::invert_2x2(hessian_2x2, inverse_hessian)) {
-#ifdef DEBUG
         printf("Singular hessian at iteration %d\n", iteration);
-#endif
         break;
       }
 
@@ -266,7 +264,6 @@ __device__ void fit_line_impl(struct Data *data, const int thread_data_index,
         break;
       }
     }
-
     // Broadcast updated parameters
     for (int i = 0; i < 4; i++) {
       bucket_tile.sync();
