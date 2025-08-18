@@ -15,14 +15,14 @@ namespace residualMath {
 // ================ Residuals ================
 // TODO: Refactor the same way as delta residuals is structured
 
-__host__ std::vector<real_t> compute_residuals(line_t &line,
-                                               const std::vector<Vector3> &K,
-                                               const std::vector<real_t> &drift_radius,
-                                               const int num_mdt_measurements,
-                                               const int num_rpc_measurements) {
+__host__ std::vector<real_t>
+compute_residuals(line_t &line, const std::vector<Vector3> &K,
+                  const std::vector<real_t> &drift_radius,
+                  const int num_mdt_measurements,
+                  const int num_rpc_measurements) {
 
   std::vector<real_t> residuals;
-  Vector3 W(1,0,0);
+  Vector3 W(1, 0, 0);
   for (int i = 0; i < num_mdt_measurements; i++) {
     real_t cross_product = K[i].cross(line.D_ortho).dot(W);
     residuals.push_back(abs(cross_product) - drift_radius[i]);
@@ -157,8 +157,8 @@ __device__ Vector4 get_gradient(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
   }
 
   for (int i = bucket_tile.num_threads() / 2; i >= 1; i /= 2) {
-    bucket_tile.sync();
     for (int j = 0; j < 4; j++) {
+      bucket_tile.sync();
       gradient[j] += bucket_tile.shfl_down(gradient[j], i);
     }
   }

@@ -3,7 +3,6 @@
 #include <cuda_runtime.h>
 #include <vector_types.h>
 
-// #define DEBUG 1
 
 #define EPSILON 1e-6
 #define FULL_MASK 0xffffffff

@@ -17,12 +17,14 @@
 #include "test_common_includes.h"
 #include "test_data_utils.h"
 
+#define EVENT_ID(bucket_id) (bucket_id & 0xFFFFFFFF)
+#define VOLUME_ID(bucket_id) (bucket_id >> 32)
+
 // #define VERBOSE 1
 
 // Forward declaration of the kernel we want to test
 __global__ void seed_lines(struct Data *data, int num_buckets);
 __global__ void fit_lines(struct Data *data, int num_buckets);
-
 
 // Helper function to run GPU fitting operations
 std::pair<std::vector<real_t>, std::vector<real_t>>
@@ -106,6 +108,25 @@ bool validate_geometric_accuracy(
   return true; // Geometric errors are expected due to ambiguities
 }
 
+bool check_chi2_nan(const std::vector<real_t> &chi2_seed,
+                    const std::vector<real_t> &chi2_fit,
+                    const std::vector<BucketGroundTruth> &ground_truths,
+                    int num_buckets) {
+  bool has_nan = false;
+
+  for (int i = 0; i < num_buckets; i++) {
+    if (std::isnan(chi2_seed[i]) || std::isnan(chi2_fit[i])) {
+      std::cout << "Chi2 value is NaN in event: "
+                << EVENT_ID(ground_truths[i].bucket_id)
+                << ", Volume: " << VOLUME_ID(ground_truths[i].bucket_id)
+                << ": Seed Chi2: " << chi2_seed[i]
+                << ", Fit Chi2: " << chi2_fit[i] << std::endl;
+      has_nan = true;
+    }
+  }
+
+  return !has_nan;
+}
 // Helper function to validate chi2 improvement
 bool validate_chi2_improvement(
     const std::vector<real_t> &chi2_seed, const std::vector<real_t> &chi2_fit,
@@ -181,8 +202,6 @@ bool analyze_fit_improvement(const std::vector<real_t> &chi2_seed,
 
 // Main test functions
 
-
-
 bool test_seed_lines_csv(int start = 0, int end = 100) {
   std::cout << "Running test_seed_lines_csv..." << std::endl;
 
@@ -220,6 +239,8 @@ bool test_seed_lines_csv(int start = 0, int end = 100) {
   // Validate results
   bool geometric_validation =
       validate_geometric_accuracy(h_data, bucket_ground_truths, num_buckets);
+
+  bool check_chi2_nan_values = check_chi2_nan(chi2_seed, chi2_fit, bucket_ground_truths, num_buckets);
   bool chi2_validation = validate_chi2_improvement(
       chi2_seed, chi2_fit, bucket_ground_truths, num_buckets);
   bool improvement_stats =
@@ -229,7 +250,7 @@ bool test_seed_lines_csv(int start = 0, int end = 100) {
   cleanup_host(h_data);
   cleanup_device(d_data);
 
-  return geometric_validation && chi2_validation && improvement_stats;
+  return geometric_validation && chi2_validation && improvement_stats && check_chi2_nan_values;
 }
 
 int main() {

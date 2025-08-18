@@ -206,6 +206,9 @@ __device__ void fit_line_impl(struct Data *data, const int thread_data_index,
 
   // Newton-Raphson iteration
   int iteration = 0;
+  bool error_flag = false; // Used to indicate an error to all other threads in
+                           // case thread 0 has encountered an error
+
   for (iteration = 0; iteration < 1000; iteration++) {
     line_t line;
     residual_cache_t residual_cache;
@@ -235,8 +238,8 @@ __device__ void fit_line_impl(struct Data *data, const int thread_data_index,
     Matrix4 hessian = residualMath::get_hessian<TILE_SIZE>(
         bucket_tile, inverse_sigma_squared, residual_cache);
 
-    // Newton step (thread 0 only, using 2x2 system because im too lazy to
-    // instantly do
+    // Newton step (thread 0 only, using 2x2 system
+    real_t delta_params_norm; // To check for early stopping
     if (bucket_tile.thread_rank() == 0) {
       Eigen::Vector2f gradient_2x2(gradient[THETA], gradient[Y0]);
 
@@ -247,23 +250,37 @@ __device__ void fit_line_impl(struct Data *data, const int thread_data_index,
       Eigen::Matrix2f inverse_hessian;
       if (!matrixMath::invert_2x2(hessian_2x2, inverse_hessian)) {
         printf("Singular hessian at iteration %d\n", iteration);
+        error_flag = true; // Set error flag to indicate failure
         break;
       }
 
       Eigen::Vector2f delta_params = -inverse_hessian * gradient_2x2;
+      delta_params_norm = delta_params.norm();
 
       // Update parameters
       params[THETA] += delta_params[0];
       params[Y0] += delta_params[1];
-
-      // Check convergence
-      if (delta_params.norm() < 1e-8) {
-#ifdef DEBUG
-        printf("Converged after %d iterations\n", iteration);
-#endif
-        break;
-      }
     }
+
+    // Broadcast error flag
+    bucket_tile.sync();
+    error_flag = bucket_tile.shfl(error_flag, 0);
+    if (error_flag) {
+      break; // Exit loop on error and dont update parameters
+    }
+
+    // Broadcast delta parameters norm
+    bucket_tile.sync();
+    delta_params_norm = bucket_tile.shfl(delta_params_norm, 0);
+    if (delta_params_norm < EPSILON) {
+      if (bucket_tile.thread_rank() == 0) {
+#ifdef VERBOSE
+        printf("Converged in %d iterations\n", iteration);
+#endif
+      }
+      break; // Convergence condition
+    }
+
     // Broadcast updated parameters
     for (int i = 0; i < 4; i++) {
       bucket_tile.sync();
@@ -273,16 +290,14 @@ __device__ void fit_line_impl(struct Data *data, const int thread_data_index,
 
   // Store final parameters (thread 0 only)
   if (bucket_tile.thread_rank() == 0) {
-#ifdef DEBUG
-    printf("Fit completed in %d iterations for bucket %d\n", iteration,
-           bucket_index);
-#endif
-
     data->theta[bucket_index] = params[THETA];
     data->phi[bucket_index] = params[PHI];
     data->x0[bucket_index] = params[X0];
     data->y0[bucket_index] = params[Y0];
   }
+
+  bucket_tile.sync();
+  return;
 }
 
 // ============================================================================
@@ -294,6 +309,7 @@ __device__ void execute_work(WorkType work_type, Data *data,
                              const int thread_data_index, int bucket_index,
                              int bucket_start, int rpc_start, int bucket_end,
                              cg::thread_block_tile<TILE_SIZE> &bucket_tile) {
+
   switch (work_type) {
   case WorkType::SEED_LINE:
     seed_line_impl<TILE_SIZE>(data, thread_data_index, bucket_index,
@@ -354,6 +370,11 @@ __device__ void partition_and_execute_work(struct Data *data, int num_buckets,
                           bucket_indices[0], bucket_starts[0], rpc_starts[0],
                           bucket_ends[0], bucket_tile);
   } else {
+#ifdef DEBUG
+    printf("Overflow detected in bucket %d or %d\n", primary_bucket,
+           secondary_bucket);
+#endif
+
     // Overflow handling with full warp
     cg::thread_block_tile<OVERFLOW_TILE_SIZE> bucket_tile =
         cg::tiled_partition<OVERFLOW_TILE_SIZE>(cg::this_thread_block());
