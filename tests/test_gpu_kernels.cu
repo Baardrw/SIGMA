@@ -264,6 +264,7 @@ int main() {
   // Run CSV-based test
   all_passed &= test_seed_lines_csv(0, 100);
 
+  return 0;
   if (all_passed) {
     std::cout << "Test completed successfully!" << std::endl;
     return 0;

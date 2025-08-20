@@ -20,7 +20,7 @@
 #include "../tests/common/test_common_includes.h"
 #include "../tests/common/test_data_utils.h"
 
-#define NUM_BUCKETS 10000 // Number of desired bins will be determined by this
+#define NUM_BUCKETS 1000000 // Number of desired bins will be determined by this
 
 // Forward declaration of the kernel we want to test
 __global__ void seed_lines(struct Data *data, int num_buckets);

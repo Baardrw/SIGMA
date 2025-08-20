@@ -10,7 +10,7 @@ using namespace cooperative_groups;
 namespace cg = cooperative_groups;
 
 typedef struct {
-  real_t residual;
+  real_t residual[3];
   real_t yz_residual_sign;
   real_t delta_residual[4];
   real_t dd_residual[3]; // THETA_THETA, PHI_PHI, THETA_PHI

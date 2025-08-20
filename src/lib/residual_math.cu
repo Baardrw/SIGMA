@@ -30,21 +30,28 @@ compute_residuals(line_t &line, const std::vector<Vector3> &K,
 
   return residuals;
 }
+
 __device__ void compute_residual(line_t &line, const Vector3 &K,
                                  const Vector3 &W, const real_t drift_radius,
                                  const int tid, const int num_mdt_measurements,
                                  const int num_rpc_measurements,
                                  residual_cache_t &residual_cache) {
 
-  real_t yz_res = 0.0f;
+  // Zero out the residual cache
+  #pragma unroll
+  for (int i = 0; i < 3; i++) {
+    residual_cache.residual[i] = 0.0f;
+  }
+
   real_t cross_product = 0.0f;
   if (tid < num_mdt_measurements) {
     cross_product = K.cross(line.D_ortho).dot(W);
-    yz_res = abs(cross_product) - drift_radius;
+    residual_cache.residual[0] = abs(cross_product) - drift_radius;
+  } else {
+    // For RPC measurements
   }
 
   residual_cache.yz_residual_sign = (cross_product < 0.0f) ? -1.0f : 1.0f;
-  residual_cache.residual = yz_res;
 }
 
 // ================ Delta Residuals ================
@@ -83,6 +90,7 @@ __device__ void compute_delta_residuals(line_t &line, const int tid,
                                         residual_cache_t &residual_cache) {
 
   // Zero out all delta residuals
+  #pragma unroll
   for (int i = 0; i < 4; i++) {
     residual_cache.delta_residual[i] = 0.0f;
   }
@@ -104,6 +112,7 @@ __device__ void compute_dd_residuals(line_t &line, const int tid,
                                      const Vector3 &K, const Vector3 &W,
                                      residual_cache_t &residual_cache) {
   // Zero out all delta delta residuals
+  #pragma unroll
   for (int i = 0; i < 3; i++) {
     residual_cache.dd_residual[i] = 0.0f;
   }
@@ -134,7 +143,7 @@ __device__ real_t get_chi2(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
                            residual_cache_t &residual_cache) {
   real_t chi2 = 0.0f;
 
-  real_t residual = residual_cache.residual;
+  real_t residual = residual_cache.residual[0];
   real_t chi_val = residual * residual * inverse_sigma_squared;
 
   for (int i = bucket_tile.num_threads() / 2; i >= 1; i /= 2) {
@@ -151,8 +160,9 @@ __device__ Vector4 get_gradient(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
                                 real_t inverse_sigma_squared,
                                 residual_cache_t &residual_cache) {
   Vector4 gradient = {0.0f, 0.0f, 0.0f, 0.0f};
+  #pragma unroll
   for (int i = 0; i < 4; i++) {
-    gradient[i] = 2 * inverse_sigma_squared * residual_cache.residual *
+    gradient[i] = 2 * inverse_sigma_squared * residual_cache.residual[0] *
                   residual_cache.delta_residual[i];
   }
 
@@ -186,7 +196,9 @@ __device__ Matrix4 get_hessian(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
                                residual_cache_t &residual_cache) {
   Matrix4 hessian = Matrix4::Zero();
 
+  #pragma unroll
   for (int i = 0; i < 4; i++) {
+    #pragma unroll
     for (int j = 0; j < 4; j++) {
       if (j >= i) {
         hessian(i, j) = 2 * inverse_sigma_squared *
