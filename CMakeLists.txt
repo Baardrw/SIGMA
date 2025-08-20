@@ -91,16 +91,51 @@ target_link_libraries(sigma
     ${CUDA_LIBRARIES}         # CUDA libraries
 )
 
+
+# ===== Common testing lib for testing utils =====
+
+set(SIGMA_TESTING_LIB_SOURCES
+    tests/common/test_data_utils.cu
+    tests/common/test_math_utils.cu
+)
+
+# Library header files
+set(SIGMA_TESING_LIB_HEADERS
+    tests/common/test_data_utils.h
+    tests/common/test_math_utils.h
+)
+
+# Create the reusable library
+add_library(sigma_testing_lib STATIC ${SIGMA_TESTING_LIB_SOURCES} ${SIGMA_LIB_HEADERS})
+
+# Set CUDA properties for library
+set_target_properties(sigma_testing_lib PROPERTIES
+    CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
+    CUDA_RUNTIME_LIBRARY SHARED
+)
+
+# Library dependencies
+target_link_libraries(sigma_testing_lib
+    sigma_lib
+    ${CUDA_LIBRARIES}
+    Eigen3::Eigen
+)
+
+# Make headers available to library consumers
+target_include_directories(sigma_testing_lib PUBLIC
+    ${CMAKE_SOURCE_DIR}/tests/common
+)
+
+
 # ===== TESTS =====
 
 option(BUILD_TESTS "Build test programs" ON)
 if(BUILD_TESTS)
+
     enable_testing()
     
     add_executable(sigma_tests
         tests/test_gpu_kernels.cu
-        tests/test_math_utils.cu
-        tests/test_data_utils.cu
     )
     
     target_include_directories(sigma_tests PRIVATE
@@ -110,6 +145,7 @@ if(BUILD_TESTS)
     # Tests link against the library
     target_link_libraries(sigma_tests
         sigma_lib             
+        sigma_testing_lib
         Threads::Threads
         Eigen3::Eigen
     )
@@ -134,6 +170,7 @@ if(BUILD_BENCHMARKS)
     # Benchmarks also link against the library
     target_link_libraries(sigma_benchmark
         sigma_lib
+        sigma_testing_lib
         Threads::Threads
         Eigen3::Eigen
     )

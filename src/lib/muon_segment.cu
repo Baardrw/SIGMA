@@ -241,20 +241,20 @@ __device__ void fit_line_impl(struct Data *data, const int thread_data_index,
     // Newton step (thread 0 only, using 2x2 system
     real_t delta_params_norm; // To check for early stopping
     if (bucket_tile.thread_rank() == 0) {
-      Eigen::Vector2f gradient_2x2(gradient[THETA], gradient[Y0]);
+      Vector2 gradient_2x2(gradient[THETA], gradient[Y0]);
 
-      Eigen::Matrix2f hessian_2x2;
+      Matrix2 hessian_2x2;
       hessian_2x2 << hessian(THETA, THETA), hessian(THETA, Y0),
           hessian(Y0, THETA), hessian(Y0, Y0);
 
-      Eigen::Matrix2f inverse_hessian;
+      Matrix2 inverse_hessian;
       if (!matrixMath::invert_2x2(hessian_2x2, inverse_hessian)) {
         printf("Singular hessian at iteration %d\n", iteration);
         error_flag = true; // Set error flag to indicate failure
         break;
       }
 
-      Eigen::Vector2f delta_params = -inverse_hessian * gradient_2x2;
+      Vector2 delta_params = -inverse_hessian * gradient_2x2;
       delta_params_norm = delta_params.norm();
 
       // Update parameters

@@ -1,6 +1,7 @@
 #pragma once
 #include <Eigen/Dense>
 #include <cuda_runtime.h>
+#include <random>
 #include <vector_types.h>
 
 
@@ -12,7 +13,9 @@
 
 typedef double real_t;
 
+using Vector2 = Eigen::Vector2d;
 using Vector3 = Eigen::Vector3d;
 using Vector4 = Eigen::Vector4d;
+using Matrix2 = Eigen::Matrix2d;
 using Matrix3 = Eigen::Matrix3d;
 using Matrix4 = Eigen::Matrix4d;

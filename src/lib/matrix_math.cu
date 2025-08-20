@@ -3,7 +3,7 @@
 
 namespace matrixMath {
 
-__device__ bool invert_2x2(const Eigen::Matrix2f &input, Eigen::Matrix2f &output) {
+__device__ bool invert_2x2(const Matrix2 &input, Matrix2 &output) {
     float det = input.determinant();
     if (fabsf(det) < 1e-7) {
         return false; // Matrix is singular, cannot invert

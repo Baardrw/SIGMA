@@ -14,8 +14,8 @@
 #include "muon_segment.h"
 
 // Test utils
-#include "test_common_includes.h"
-#include "test_data_utils.h"
+#include "common/test_common_includes.h"
+#include "common/test_data_utils.h"
 
 #define EVENT_ID(bucket_id) (bucket_id & 0xFFFFFFFF)
 #define VOLUME_ID(bucket_id) (bucket_id >> 32)

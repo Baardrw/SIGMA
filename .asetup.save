@@ -1,0 +1,60 @@
+#Release cmake
+
+export LANG="C.utf8"
+export LC_ALL="C.utf8"
+export COOL_ORA_ENABLE_ADAPTIVE_OPT="Y"
+export ASETUP_PRINTLEVEL="0"
+export BINARY_TAG="x86_64-el9-gcc14-opt"
+export CMTCONFIG="x86_64-el9-gcc14-opt"
+if [ -z "${AtlasSetup:+x}" ]; then
+    export AtlasSetup="/cvmfs/atlas.cern.ch/repo/ATLASLocalRootBase/x86_64/AtlasSetup/V03-01-19/AtlasSetup"
+    export AtlasSetupVersion="AtlasSetup-03-01-19"
+fi
+if [ -n "${MAKEFLAGS:+x}" ]; then
+    asetup_flags=`echo ${MAKEFLAGS} | \grep ' -l'`
+    if [ -z "${asetup_flags}" ]; then
+        export MAKEFLAGS="${MAKEFLAGS} -l384"
+    fi
+else
+    export MAKEFLAGS="-j384 -l384"
+fi
+source /cvmfs/sft.cern.ch/lcg/releases/gcc/14.3.0-c8dfb/x86_64-el9/setup.sh
+if [ -z "${CC:+x}" ]; then
+    export CC=`\env which gcc 2>/dev/null`
+    [[ -z "$CC" ]] && unset CC
+fi
+if [ -z "${CXX:+x}" ]; then
+    export CXX=`\env which g++ 2>/dev/null`
+    [[ -z "$CXX" ]] && unset CXX
+fi
+if [ -z "${CUDAHOSTCXX:+x}" ]; then
+    export CUDAHOSTCXX=`\env which g++ 2>/dev/null`
+    [[ -z "$CUDAHOSTCXX" ]] && unset CUDAHOSTCXX
+fi
+if [ -z "${FC:+x}" ]; then
+    export FC=`\env which gfortran 2>/dev/null`
+    [[ -z "$FC" ]] && unset FC
+fi
+export CMAKE_NO_VERBOSE="1"
+if [ -z "${CMAKE_BUILD_PARALLEL_LEVEL:+x}" ]; then
+    export CMAKE_BUILD_PARALLEL_LEVEL="384"
+fi
+type lsetup &>/dev/null
+if [ $? -ne 0 ]; then
+   if [ -z "$ATLAS_LOCAL_ROOT_BASE" ]; then
+      if [ -z "$ATLAS_SW_BASE" ]; then
+         export ATLAS_SW_BASE=/cvmfs
+       fi
+      export ATLAS_LOCAL_ROOT_BASE=$ATLAS_SW_BASE/atlas.cern.ch/repo/ATLASLocalRootBase
+   fi
+   source ${ATLAS_LOCAL_ROOT_BASE}/user/atlasLocalSetup.sh --quiet
+fi
+source $ATLAS_LOCAL_ROOT_BASE/packageSetups/localSetup.sh --quiet cmake
+
+# Execute user-specified epilog
+
+source /cvmfs/atlas.cern.ch/repo/ATLASLocalRootBase/swConfig/asetup/asetupEpilog.sh
+script_status=$?
+if [ ${script_status} -ne 0 ]; then
+    \echo "AtlasSetup(ERROR): User-specified epilog (source /cvmfs/atlas.cern.ch/repo/ATLASLocalRootBase/swConfig/asetup/asetupEpilog.sh) reported failure (error ${script_status})"
+fi
