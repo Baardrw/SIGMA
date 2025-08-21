@@ -9,20 +9,13 @@
 using namespace cooperative_groups;
 namespace cg = cooperative_groups;
 
-typedef struct {
-  real_t residual[3];
-  real_t yz_residual_sign;
-  real_t delta_residual[4];
-  real_t dd_residual[3]; // THETA_THETA, PHI_PHI, THETA_PHI
-} residual_cache_t;
-
 namespace residualMath {
 
-__host__ std::vector<real_t> compute_residuals(line_t &line,
-                                               const std::vector<Vector3> &K,
-                                               const std::vector<real_t> &drift_radius,
-                                               const int num_mdt_measurements,
-                                               const int num_rpc_measurements);
+__host__ std::vector<real_t>
+compute_residuals(line_t &line, const std::vector<Vector3> &K,
+                  const std::vector<real_t> &drift_radius,
+                  const int num_mdt_measurements,
+                  const int num_rpc_measurements);
 
 /**
  * Computes the residuals for all measurements in the bucket.
@@ -31,30 +24,28 @@ __host__ std::vector<real_t> compute_residuals(line_t &line,
  * WARNING: lineMath::update_derivatives Must be called before this function
  * is called to ensure that line.D_ortho is up to date.
  */
-__device__ void compute_residual(line_t &line, const Vector3 &K,
-                                 const Vector3 &W, const real_t drift_radius,
-                                 const int tid, const int num_mdt_measurements,
+__device__ void compute_residual(line_t &line, const int tid,
+                                 const int num_mdt_measurements,
                                  const int num_rpc_measurements,
+                                 const measurement_cache_t &measurement_cache,
                                  residual_cache_t &residual_cache);
 
-/**
- * Computes the delta residuals for all measurements in the bucket.
- * Stores the delta residuals in the residual_cache.
- *
- * WARNING: residualMath::compute_residual Must be called before this function
- * is called to ensure that the yz_residual_sign is up to date.
- */
-__device__ void compute_delta_residuals(line_t &line, const int tid,
-                                        const int num_mdt_measurements,
-                                        const int num_rpc_measurements,
-                                        const Vector3 &K, const Vector3 &W,
-                                        residual_cache_t &residual_cache);
 
-__device__ void compute_dd_residuals(line_t &line, const int tid,
-                                     const int num_mdt_measurements,
-                                     const int num_rpc_measurements,
-                                     const Vector3 &K, const Vector3 &W,
-                                     residual_cache_t &residual_cache);
+/**
+ * More optimized version of computing all the residuals in different functions,
+ * avoids function calling overheads,
+ * and allows to easier reuse computation results.
+
+ * This function fills the residual_cache with all the residuals, delta
+ residuals, and delta delta residuals
+ */
+__device__ void
+update_residual_cache(line_t &line, const int tid,
+                          const int num_mdt_measurements,
+                          const int num_rpc_measurements,
+                          const measurement_cache_t &measurement_cache,
+                          residual_cache_t &residual_cache);
+
 
 /**
  * Computes the gradient vector for the line via a shfl_down reduction
@@ -64,12 +55,12 @@ __device__ void compute_dd_residuals(line_t &line, const int tid,
  */
 template <unsigned int TILE_SIZE>
 __device__ Vector4 get_gradient(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
-                                real_t inverse_sigma_squared,
+                                const Vector3 &inverse_sigma_squared,
                                 residual_cache_t &residual_cache);
 
 template <unsigned int TILE_SIZE>
 __device__ Matrix4 get_hessian(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
-                               real_t inverse_sigma_squared,
+                               const Vector3 &inverse_sigma_squared,
                                residual_cache_t &residual_cache);
 
 __host__ real_t get_chi2(const std::vector<real_t> &residuals,
@@ -81,6 +72,6 @@ __host__ real_t get_chi2(const std::vector<real_t> &residuals,
  */
 template <unsigned int TILE_SIZE>
 __device__ real_t get_chi2(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
-                           real_t inverse_sigma_squared,
+                           const Vector3 &inverse_sigma_squared,
                            residual_cache_t &residual_cache);
 } // namespace residualMath

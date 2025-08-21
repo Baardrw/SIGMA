@@ -1,3 +1,4 @@
+#include "data_structures.h"
 #include "test_math_utils.h"
 
 void calculate_bucket_answer(BucketGroundTruth &bucket_ground_truth,
@@ -69,6 +70,7 @@ void calculate_bucket_answer(BucketGroundTruth &bucket_ground_truth,
   }
 }
 
+// TODO: update to 3D
 std::vector<real_t> calculate_chi2(Data &h_data, int num_buckets) {
 
   std::vector<real_t> chi2_values(num_buckets, 0.0f);
@@ -89,7 +91,7 @@ std::vector<real_t> calculate_chi2(Data &h_data, int num_buckets) {
     // Create line
     line_t line;
     lineMath::create_line(x0, y0, phi, theta, line);
-    lineMath::compute_D_ortho(line, {1, 0, 0});
+    lineMath::compute_D_ortho(line);
 
     // Compute K
     std::vector<Vector3> K;
@@ -110,7 +112,7 @@ std::vector<real_t> calculate_chi2(Data &h_data, int num_buckets) {
     // get inverse sigma squared
     for (int j = start_idx; j < end_idx; j++) {
       inverse_sigma_squared.push_back(1.0f /
-                                      (h_data.sigma[j] * h_data.sigma[j]));
+                                      (h_data.sigma_x[j] * h_data.sigma_x[j]));
     }
 
     residuals = residualMath::compute_residuals(

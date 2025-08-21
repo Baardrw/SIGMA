@@ -9,29 +9,26 @@
 #define GET_X0(line) (line.params[2])
 #define GET_Y0(line) (line.params[3])
 
-#define EIGEN_VEC3(data, prefix, i)                                            \
-  Vector3((data)->prefix##_x[i], (data)->prefix##_y[i],                \
-                  (data)->prefix##_z[i])
+#define MDT_DIR Vector3(1.0f, 0.0f, 0.0f) // Default wire direction
 
+#define EIGEN_VEC3(data, prefix, i)                                            \
+  Vector3((data)->prefix##_x[i], (data)->prefix##_y[i], (data)->prefix##_z[i])
 
 #define SENSOR_POS(data, i) EIGEN_VEC3(data, sensor_pos, i)
-#define HIT_POS(data, i) EIGEN_VEC3(data, hit_pos, i)
-#define RPC_HIT_POS(data, i) EIGEN_VEC3(data, rpc_hit, i)
-#define RPC_NORMAL(data, i) EIGEN_VEC3(data, rpc_normal, i)
+#define PLANE_NORMAL(data, i) EIGEN_VEC3(data, plane_normal, i)
+#define SENSOR_DIRECTION(data, i) EIGEN_VEC3(data, sensor_dir, i)
 
-#define SIGMA(data, i) (data)->sigma[i]
-#define DRIFT_RADIUS(data, i) \
-  (data)->drift_radius[i]
-
+#define SIGMA(data, i) EIGEN_VEC3(data, sigma, i)
+#define DRIFT_RADIUS(data, i) (data)->drift_radius[i]
 
 struct Data {
   real_t *sensor_pos_x;
   real_t *sensor_pos_y;
   real_t *sensor_pos_z;
 
-  real_t *plane_norm_x;
-  real_t *plane_norm_y;
-  real_t *plane_norm_z;
+  real_t *plane_normal_x;
+  real_t *plane_normal_y;
+  real_t *plane_normal_z;
 
   real_t *sensor_dir_x;
   real_t *sensor_dir_y;
@@ -42,7 +39,9 @@ struct Data {
   real_t *to_next_d_z;
 
   real_t *drift_radius;
-  real_t *sigma; // Dirft radius uncertainty
+  real_t *sigma_x; // Sigma bending
+  real_t *sigma_y; // Sigma non-bending
+  real_t *sigma_z; // Sigma time
 
   real_t *time;
   int *buckets; // bucket[bucket_index * 2] -> start of mdt data
@@ -78,7 +77,12 @@ enum {
 
   DD_THETA_THETA = 0,
   DD_PHI_PHI = 1,
-  DD_THETA_PHI = 2
+  DD_THETA_PHI = 2,
+
+  // Reisudal indexes
+  BENDING = 0,
+  NON_BENDING = 1,
+  TIME = 2
 };
 
 typedef struct line {
@@ -95,3 +99,26 @@ typedef struct line {
   Vector3 dD_ortho[2];  // theta, phi
   Vector3 ddD_ortho[3]; // theta theta, phi phi, theta phi
 } line_t;
+
+typedef struct {
+  Vector3 residual; // Residual for the measurement
+  Vector3 delta_residual[4];
+  Vector3 dd_residual[3]; // THETA_THETA, PHI_PHI, THETA_PHI
+} residual_cache_t;
+
+typedef struct {
+  // MDT measurements
+  Vector3 connection_vector; // Vector from the z plane intersection to the
+                              // sensor position
+  real_t drift_radius;       // MDT drift radius measurement
+
+  // Shared
+  Vector3 sensor_direction; // RPC sensor direction, or MDT wire direction
+                             // (each thread is only assigned one type of
+                             // measurement, so no conflicts will occour)
+  Vector3 sensor_pos; // Sensor position, for RPC this gives the hit position,
+                       // for mdt it gives the tube center
+
+  // RPC measurements
+  Vector3 plane_normal; // RPC plane normal
+} measurement_cache_t;

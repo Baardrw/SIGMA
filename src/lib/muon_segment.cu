@@ -20,7 +20,6 @@ enum class WorkType { SEED_LINE, FIT_LINE };
 
 __constant__ real_t rho_0_comb[4] = {1, -1, 1, -1};
 __constant__ real_t rho_1_comb[4] = {1, 1, -1, -1};
-__constant__ real_t W_components[3] = {1.0f, 0.0f, 0.0f};
 
 // ============================================================================
 // Utility Functions
@@ -64,13 +63,32 @@ initialize_bucket_indexing(struct Data *data, int bucket_index,
 
   thread_data_index = bucket_start + threadIdx.x % TILE_SIZE;
   if (thread_data_index >= bucket_end) {
-    thread_data_index = bucket_end - 1;
+    thread_data_index = bucket_end;
   }
 }
 
 // ============================================================================
 // Work Implementation Functions
 // ============================================================================
+
+__device__ __forceinline__ void
+load_measurement_cache(struct Data *data, const int thread_data_index,
+                       real_t x0, real_t y0, int bucket_end,
+                       measurement_cache_t &measurement_cache) {
+  // if (thread_data_index < bucket_end) {
+  // clang-format off
+    // Get sensor position
+    Vector3 sensor_pos = SENSOR_POS(data, thread_data_index);
+
+    // Initialize measurement cache
+    measurement_cache.connection_vector = sensor_pos - Vector3(x0, y0, 0.0f);
+    measurement_cache.drift_radius      = DRIFT_RADIUS(data, thread_data_index);
+    measurement_cache.sensor_direction  = SENSOR_DIRECTION(data, thread_data_index);
+    measurement_cache.sensor_pos        = sensor_pos;
+    measurement_cache.plane_normal      = PLANE_NORMAL(data, thread_data_index);
+  // clang-format on
+  // }
+}
 
 template <unsigned int TILE_SIZE>
 __device__ void seed_line_impl(struct Data *data, const int thread_data_index,
@@ -136,30 +154,32 @@ __device__ void seed_line_impl(struct Data *data, const int thread_data_index,
 
   // ================ Evaluate Line Quality ================
 
-  // Setup for residual calculations
-  const Vector3 sensor_pos = SENSOR_POS(data, thread_data_index);
-  const real_t drift_radius = DRIFT_RADIUS(data, thread_data_index);
-  const real_t sigma = SIGMA(data, thread_data_index);
-  const Vector3 W = {W_components[0], W_components[1], W_components[2]};
+  const Vector3 sigma = SIGMA(data, thread_data_index);
+  const Vector3 inverse_sigma_squared =
+      INVERSE_VECTOR3(elementwise_mult(sigma, sigma));
 
   const int num_mdt_measurements = rpc_start - bucket_start;
   const int num_rpc_measurements = bucket_end - rpc_start;
-  const real_t inverse_sigma_squared = 1.0f / (sigma * sigma);
 
   // Evaluate each line candidate
   real_t chi2_arr[4];
   for (int j = 0; j < 4; j++) {
+    measurement_cache_t measurement_cache;
+    load_measurement_cache(data, thread_data_index, x0[0], y0[0], bucket_end,
+                           measurement_cache);
+
     residual_cache_t residual_cache;
     line_t line;
 
     lineMath::create_line(x0[j], y0[j], phi, theta[j], line);
-    lineMath::compute_D_ortho(line, W);
+    lineMath::compute_D_ortho(line);
 
-    Vector3 K = sensor_pos - line.S0;
+    measurement_cache.connection_vector =
+        measurement_cache.sensor_pos - line.S0;
 
-    residualMath::compute_residual(
-        line, K, W, drift_radius, bucket_tile.thread_rank(),
-        num_mdt_measurements, num_rpc_measurements, residual_cache);
+    residualMath::compute_residual(line, bucket_tile.thread_rank(),
+                                   num_mdt_measurements, num_rpc_measurements,
+                                   measurement_cache, residual_cache);
 
     chi2_arr[j] = residualMath::get_chi2<TILE_SIZE>(
         bucket_tile, inverse_sigma_squared, residual_cache);
@@ -194,12 +214,21 @@ __device__ void fit_line_impl(struct Data *data, const int thread_data_index,
   Vector4 params = {data->theta[bucket_index], data->phi[bucket_index],
                     data->x0[bucket_index], data->y0[bucket_index]};
 
-  // Setup constants
-  const Vector3 sensor_pos = SENSOR_POS(data, thread_data_index);
-  const Vector3 W = {W_components[0], W_components[1], W_components[2]};
-  const real_t drift_radius = DRIFT_RADIUS(data, thread_data_index);
-  const real_t sigma = SIGMA(data, thread_data_index);
-  const real_t inverse_sigma_squared = 1.0f / (sigma * sigma);
+  // Construct measurement cache
+  measurement_cache_t measurement_cache;
+  load_measurement_cache(data, thread_data_index, params[X0], params[Y0],
+                         bucket_end, measurement_cache);
+
+  // Initialize inverse sigma squared
+  const Vector3 sigma = SIGMA(data, thread_data_index);
+  Vector3 sigma_squared = elementwise_mult(sigma, sigma);
+#pragma unroll
+  for (int i = 0; i < 3; i++) {
+    if (sigma_squared[i] < EPSILON) {
+      sigma_squared[i] = EPSILON; // Avoid division by zero
+    }
+  }
+  const Vector3 inverse_sigma_squared = INVERSE_VECTOR3(sigma_squared);
 
   const int num_mdt_measurements = rpc_start - bucket_start;
   const int num_rpc_measurements = bucket_end - rpc_start;
@@ -216,21 +245,13 @@ __device__ void fit_line_impl(struct Data *data, const int thread_data_index,
     // Update line and compute derivatives
     lineMath::create_line(params[X0], params[Y0], params[PHI], params[THETA],
                           line);
-    lineMath::update_derivatives(line, W);
-    Vector3 K = sensor_pos - line.S0;
+    lineMath::update_derivatives(line);
+    measurement_cache.connection_vector =
+        measurement_cache.sensor_pos - line.S0;
 
-    // Compute residuals and derivatives
-    residualMath::compute_residual(
-        line, K, W, drift_radius, bucket_tile.thread_rank(),
-        num_mdt_measurements, num_rpc_measurements, residual_cache);
-
-    residualMath::compute_delta_residuals(
+    residualMath::update_residual_cache(
         line, bucket_tile.thread_rank(), num_mdt_measurements,
-        num_rpc_measurements, K, W, residual_cache);
-
-    residualMath::compute_dd_residuals(
-        line, bucket_tile.thread_rank(), num_mdt_measurements,
-        num_rpc_measurements, K, W, residual_cache);
+        num_rpc_measurements, measurement_cache, residual_cache);
 
     // Get gradient and hessian
     Vector4 gradient = residualMath::get_gradient<TILE_SIZE>(
@@ -365,6 +386,10 @@ __device__ void partition_and_execute_work(struct Data *data, int num_buckets,
     // Normal processing with half-warp tiles
     cg::thread_block_tile<MAX_MPB> bucket_tile =
         cg::tiled_partition<MAX_MPB>(cg::this_thread_block());
+
+    if (bucket_indices[0] >= num_buckets) {
+      return; // Invalid bucket, exit early
+    }
 
     execute_work<MAX_MPB>(work_type, data, thread_data_indices[0],
                           bucket_indices[0], bucket_starts[0], rpc_starts[0],
