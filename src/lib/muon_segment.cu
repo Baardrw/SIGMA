@@ -8,6 +8,8 @@
 #include "matrix_math.h"
 #include "muon_segment.h"
 #include "residual_math.h"
+// #define VERBOSE 1
+// #define DEBUG 1
 
 using namespace cooperative_groups;
 namespace cg = cooperative_groups;
@@ -165,7 +167,7 @@ __device__ void seed_line_impl(struct Data *data, const int thread_data_index,
   real_t chi2_arr[4];
   for (int j = 0; j < 4; j++) {
     measurement_cache_t measurement_cache;
-    load_measurement_cache(data, thread_data_index, x0[0], y0[0], bucket_end,
+    load_measurement_cache(data, thread_data_index, x0[j], y0[j], bucket_end,
                            measurement_cache);
 
     residual_cache_t residual_cache;
@@ -181,8 +183,17 @@ __device__ void seed_line_impl(struct Data *data, const int thread_data_index,
                                    num_mdt_measurements, num_rpc_measurements,
                                    measurement_cache, residual_cache);
 
+    // printf("Inverse Sigma Squared: %f, %f, %f\n", inverse_sigma_squared[0],
+    //        inverse_sigma_squared[1], inverse_sigma_squared[2]);
+
+    // for (int i = 0; i < residual_cache.residual.size(); i++) {
+    //   printf("%f ", residual_cache.residual[i]);
+    // }
+
     chi2_arr[j] = residualMath::get_chi2<TILE_SIZE>(
-        bucket_tile, inverse_sigma_squared, residual_cache);
+        bucket_tile, num_mdt_measurements + num_rpc_measurements,
+        inverse_sigma_squared, residual_cache);
+    // printf("Chi2 for combination %d: %f\n", j, chi2_arr[j]);
   }
 
   // Store best line parameters (thread 0 only)
@@ -210,6 +221,14 @@ __device__ void fit_line_impl(struct Data *data, const int thread_data_index,
                               int bucket_end,
                               cg::thread_block_tile<TILE_SIZE> &bucket_tile) {
 
+  // if (TILE_SIZE == 32) {
+  //   if (bucket_tile.thread_rank() == 16) {
+  //     printf("Bucket index %d is using full warp for fitting. This may be due "
+  //            "to overflow.\n",
+  //            bucket_index);
+  //   }
+  // }
+
   // Initialize from seed parameters
   Vector4 params = {data->theta[bucket_index], data->phi[bucket_index],
                     data->x0[bucket_index], data->y0[bucket_index]};
@@ -232,6 +251,7 @@ __device__ void fit_line_impl(struct Data *data, const int thread_data_index,
 
   const int num_mdt_measurements = rpc_start - bucket_start;
   const int num_rpc_measurements = bucket_end - rpc_start;
+  const int num_measurements = num_mdt_measurements + num_rpc_measurements;
 
   // Newton-Raphson iteration
   int iteration = 0;
@@ -255,32 +275,19 @@ __device__ void fit_line_impl(struct Data *data, const int thread_data_index,
 
     // Get gradient and hessian
     Vector4 gradient = residualMath::get_gradient<TILE_SIZE>(
-        bucket_tile, inverse_sigma_squared, residual_cache);
+        bucket_tile, num_measurements, inverse_sigma_squared, residual_cache);
+
     Matrix4 hessian = residualMath::get_hessian<TILE_SIZE>(
-        bucket_tile, inverse_sigma_squared, residual_cache);
+        bucket_tile, num_measurements, inverse_sigma_squared, residual_cache);
 
-    // Newton step (thread 0 only, using 2x2 system
-    real_t delta_params_norm; // To check for early stopping
-    if (bucket_tile.thread_rank() == 0) {
-      Vector2 gradient_2x2(gradient[THETA], gradient[Y0]);
-
-      Matrix2 hessian_2x2;
-      hessian_2x2 << hessian(THETA, THETA), hessian(THETA, Y0),
-          hessian(Y0, THETA), hessian(Y0, Y0);
-
-      Matrix2 inverse_hessian;
-      if (!matrixMath::invert_2x2(hessian_2x2, inverse_hessian)) {
+    Matrix4 inverse_hessian;
+    if (!matrixMath::invert_4x4<TILE_SIZE>(bucket_tile, hessian,
+                                           inverse_hessian)) {
+      if (bucket_tile.thread_rank() == 16) {
         printf("Singular hessian at iteration %d\n", iteration);
-        error_flag = true; // Set error flag to indicate failure
-        break;
+        printf("Bucket index: %d\n", bucket_index);
       }
-
-      Vector2 delta_params = -inverse_hessian * gradient_2x2;
-      delta_params_norm = delta_params.norm();
-
-      // Update parameters
-      params[THETA] += delta_params[0];
-      params[Y0] += delta_params[1];
+      error_flag = true; // Set error flag to indicate failure
     }
 
     // Broadcast error flag
@@ -290,24 +297,41 @@ __device__ void fit_line_impl(struct Data *data, const int thread_data_index,
       break; // Exit loop on error and dont update parameters
     }
 
+    real_t delta_params_norm; // To check for early stopping
+    if (bucket_tile.thread_rank() == 0) {
+
+      Vector4 delta_params = -inverse_hessian * gradient;
+      delta_params_norm = delta_params.norm();
+      params += delta_params;
+
+#ifdef VERBOSE
+      if (iteration % 100 == 0) {
+        printf("Iteration %d: delta norm = %.15f\n", iteration,
+               delta_params_norm);
+      }
+#endif
+    }
+
     // Broadcast delta parameters norm
     bucket_tile.sync();
     delta_params_norm = bucket_tile.shfl(delta_params_norm, 0);
-    if (delta_params_norm < EPSILON) {
+    if (delta_params_norm < 1e-8) {
       if (bucket_tile.thread_rank() == 0) {
 #ifdef VERBOSE
-        printf("Converged in %d iterations\n", iteration);
+        printf("Converged in %d iterations. delta_param norm: %.15f\n",
+               iteration, delta_params_norm);
 #endif
       }
       break; // Convergence condition
     }
 
-    // Broadcast updated parameters
+// Broadcast updated parameters
+#pragma unroll
     for (int i = 0; i < 4; i++) {
       bucket_tile.sync();
       params[i] = bucket_tile.shfl(params[i], 0);
     }
-  }
+  } // End of Newton-Raphson loop
 
   // Store final parameters (thread 0 only)
   if (bucket_tile.thread_rank() == 0) {
@@ -399,6 +423,7 @@ __device__ void partition_and_execute_work(struct Data *data, int num_buckets,
     printf("Overflow detected in bucket %d or %d\n", primary_bucket,
            secondary_bucket);
 #endif
+      return;
 
     // Overflow handling with full warp
     cg::thread_block_tile<OVERFLOW_TILE_SIZE> bucket_tile =
@@ -418,6 +443,9 @@ __device__ void partition_and_execute_work(struct Data *data, int num_buckets,
       initialize_bucket_indexing<OVERFLOW_TILE_SIZE>(
           data, current_bucket, bucket_start, rpc_start, bucket_end,
           thread_data_index);
+
+      if (threadIdx.x == 16)
+        printf("Processing bucket %d with overflow\n", current_bucket);
 
       execute_work<OVERFLOW_TILE_SIZE>(work_type, data, thread_data_index,
                                        current_bucket, bucket_start, rpc_start,

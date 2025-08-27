@@ -105,7 +105,6 @@ set(SIGMA_TESING_LIB_HEADERS
     tests/common/test_math_utils.h
 )
 
-# Create the reusable library
 add_library(sigma_testing_lib STATIC ${SIGMA_TESTING_LIB_SOURCES} ${SIGMA_LIB_HEADERS})
 
 # Set CUDA properties for library
@@ -134,31 +133,53 @@ if(BUILD_TESTS)
 
     enable_testing()
     
-    add_executable(sigma_tests
+    # GPU Kernels Test
+    add_executable(sigma_gpu_tests
         tests/test_gpu_kernels.cu
     )
     
-    target_include_directories(sigma_tests PRIVATE
+    target_include_directories(sigma_gpu_tests PRIVATE
         tests/                          
     )
     
-    # Tests link against the library
-    target_link_libraries(sigma_tests
+    target_link_libraries(sigma_gpu_tests
         sigma_lib             
         sigma_testing_lib
         Threads::Threads
         Eigen3::Eigen
     )
     
-    # Set CUDA properties for tests
-    set_target_properties(sigma_tests PROPERTIES
+    set_target_properties(sigma_gpu_tests PROPERTIES
         CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
         CUDA_RESOLVE_DEVICE_SYMBOLS ON
     )
     
-    add_test(NAME SigmaTests COMMAND sigma_tests)
+    # Matrix Inversion Test
+    add_executable(sigma_matrix_tests
+        tests/test_matrix_inversion.cu
+    )
+    
+    target_include_directories(sigma_matrix_tests PRIVATE
+        tests/                          
+    )
+    
+    target_link_libraries(sigma_matrix_tests
+        sigma_lib             
+        sigma_testing_lib
+        Threads::Threads
+        Eigen3::Eigen
+    )
+    
+    set_target_properties(sigma_matrix_tests PROPERTIES
+        CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
+        CUDA_RESOLVE_DEVICE_SYMBOLS ON
+    )
+    
+    # Add both tests to CTest
+    add_test(NAME SigmaGPUTests COMMAND sigma_gpu_tests)
+    add_test(NAME SigmaMatrixTests COMMAND sigma_matrix_tests)
+    
 endif()
-
 
 # # ===== OPTIONAL BENCHMARKS =====
 option(BUILD_BENCHMARKS "Build benchmark programs" ON)

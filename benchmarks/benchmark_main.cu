@@ -20,7 +20,7 @@
 #include "../tests/common/test_common_includes.h"
 #include "../tests/common/test_data_utils.h"
 
-#define NUM_BUCKETS 1000000 // Number of desired bins will be determined by this
+#define NUM_BUCKETS 50 // Number of desired bins will be determined by this
 
 // Forward declaration of the kernel we want to test
 __global__ void seed_lines(struct Data *data, int num_buckets);
@@ -160,13 +160,13 @@ void create_round_robin_data(
 
       h_data.drift_radius[measurement_idx] =
           0.0f; // RPC doesn't have drift radius
-      h_data.sigma_x[measurement_idx] = 0.1f;
-      h_data.sigma_y[measurement_idx] = 1.0f;
+      h_data.sigma_x[measurement_idx] = 1 / sqrt(12);
+      h_data.sigma_y[measurement_idx] = 1 / sqrt(12);
       h_data.sigma_z[measurement_idx] = 1.0f;
 
       // Generate plane normal and strip direction
       Vector3 plane_normal(0, 0, 1);
-      Vector3 sensor_dir(0, 1, 0);
+      Vector3 sensor_dir(0, 0, 0);
       h_data.sensor_dir_x[measurement_idx] = sensor_dir.x();
       h_data.sensor_dir_y[measurement_idx] = sensor_dir.y();
       h_data.sensor_dir_z[measurement_idx] = sensor_dir.z();
@@ -228,8 +228,33 @@ bool benchmark_seed_line_with_round_robin_data() {
 
   // Create round-robin duplicated data
   auto start_setup = std::chrono::high_resolution_clock::now();
-  create_round_robin_data(h_data, bucket_ids, mdt_bucket, rpc_bucket,
-                          bucket_ground_truths, desired_buckets);
+  // Create duplicated data structures
+  std::vector<long> duplicated_bucket_ids;
+  std::map<long, std::vector<MDTHit>> duplicated_mdt_bucket;
+  std::map<long, std::vector<RPCHit>> duplicated_rpc_bucket;
+  std::vector<BucketGroundTruth> duplicated_ground_truths;
+
+  // Round-robin duplicate the loaded data
+  for (int i = 0; i < desired_buckets; i++) {
+    int original_idx = i % original_buckets;
+    long original_bucket_id = bucket_ids[original_idx];
+
+    // Create unique bucket ID
+    long new_bucket_id =
+        original_bucket_id + ((long)(i / original_buckets) << 40);
+    duplicated_bucket_ids.push_back(new_bucket_id);
+
+    // Copy original data with new bucket ID
+    duplicated_mdt_bucket[new_bucket_id] = mdt_bucket[original_bucket_id];
+    duplicated_rpc_bucket[new_bucket_id] = rpc_bucket[original_bucket_id];
+  }
+
+  // Now use the WORKING functions from your test code
+  setup_h_data_buckets(h_data, duplicated_bucket_ids, duplicated_mdt_bucket,
+                       duplicated_rpc_bucket);
+  populate_h_data(h_data, duplicated_mdt_bucket, duplicated_rpc_bucket,
+                  duplicated_bucket_ids, duplicated_ground_truths);
+
   auto end_setup = std::chrono::high_resolution_clock::now();
 
   // Calculate total measurements
@@ -258,7 +283,7 @@ bool benchmark_seed_line_with_round_robin_data() {
   const int warpSize = 32;
   const int cg_group_size =
       16; // Use 16 threads per warp for cooperative groups
-  const int warps_per_block = 10;
+  const int warps_per_block = 5;
   const int block_x = warpSize * warps_per_block;
   const int num_blocks =
       desired_buckets / (warps_per_block * (warpSize / cg_group_size)) +

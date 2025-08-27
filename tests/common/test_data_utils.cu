@@ -1,9 +1,11 @@
 #include <Eigen/Dense>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <map>
 #include <set>
 
+#include "config.h"
 #include "data_structures.h"
 #include "test_common_includes.h"
 #include "test_math_utils.h"
@@ -190,9 +192,10 @@ void populate_h_data(Data &h_data,
       real_t dz = hit.surface_pos_z - hit.poca_z;
       h_data.drift_radius[measurement_idx] = std::sqrt(dy * dy + dz * dz);
 
-      h_data.sigma_x[measurement_idx] =
-          1 / (EPSILON + h_data.drift_radius[measurement_idx]);
-      h_data.sigma_y[measurement_idx] = 1.0f;
+      h_data.sigma_x[measurement_idx] = 1 / (h_data.drift_radius[measurement_idx] + EPSILON);
+      h_data.sigma_y[measurement_idx] =
+          h_data.sigma_x[measurement_idx]; // so that it matches with the 1D
+                                           // residual version
       h_data.sigma_z[measurement_idx] = 1.0f;
       measurement_idx++;
     }
@@ -208,13 +211,13 @@ void populate_h_data(Data &h_data,
 
       // RPC doesn't have drift radius, set to 0
       h_data.drift_radius[measurement_idx] = 0.0f;
-      h_data.sigma_x[measurement_idx] = 0.1f;
-      h_data.sigma_y[measurement_idx] = 1.0f;
+      h_data.sigma_x[measurement_idx] = 1 / std::sqrt(12);
+      h_data.sigma_y[measurement_idx] = h_data.sigma_x[measurement_idx];
       h_data.sigma_z[measurement_idx] = 1.0f;
 
       // Generate plane normal and strip direction
       Vector3 plane_normal(0, 0, 1);
-      Vector3 sensor_dir(0, 1, 0);
+      Vector3 sensor_dir(1, 0, 0);
       h_data.sensor_dir_x[measurement_idx] = sensor_dir.x();
       h_data.sensor_dir_y[measurement_idx] = sensor_dir.y();
       h_data.sensor_dir_z[measurement_idx] = sensor_dir.z();
@@ -302,12 +305,18 @@ Data copy_to_device(const Data &h_data, int num_measurements, int num_buckets) {
   CUDA_CHECK(cudaMalloc(&d_data.phi, num_buckets * sizeof(real_t)));
   CUDA_CHECK(cudaMalloc(&d_data.x0, num_buckets * sizeof(real_t)));
   CUDA_CHECK(cudaMalloc(&d_data.y0, num_buckets * sizeof(real_t)));
-  CUDA_CHECK(cudaMalloc(&d_data.plane_normal_x, num_measurements * sizeof(real_t)));
-  CUDA_CHECK(cudaMalloc(&d_data.plane_normal_y, num_measurements * sizeof(real_t)));
-  CUDA_CHECK(cudaMalloc(&d_data.plane_normal_z, num_measurements * sizeof(real_t)));
-  CUDA_CHECK(cudaMalloc(&d_data.sensor_dir_x, num_measurements * sizeof(real_t)));
-  CUDA_CHECK(cudaMalloc(&d_data.sensor_dir_y, num_measurements * sizeof(real_t)));
-  CUDA_CHECK(cudaMalloc(&d_data.sensor_dir_z, num_measurements * sizeof(real_t)));
+  CUDA_CHECK(
+      cudaMalloc(&d_data.plane_normal_x, num_measurements * sizeof(real_t)));
+  CUDA_CHECK(
+      cudaMalloc(&d_data.plane_normal_y, num_measurements * sizeof(real_t)));
+  CUDA_CHECK(
+      cudaMalloc(&d_data.plane_normal_z, num_measurements * sizeof(real_t)));
+  CUDA_CHECK(
+      cudaMalloc(&d_data.sensor_dir_x, num_measurements * sizeof(real_t)));
+  CUDA_CHECK(
+      cudaMalloc(&d_data.sensor_dir_y, num_measurements * sizeof(real_t)));
+  CUDA_CHECK(
+      cudaMalloc(&d_data.sensor_dir_z, num_measurements * sizeof(real_t)));
 
   // Copy data to device
   CUDA_CHECK(cudaMemcpy(d_data.sensor_pos_x, h_data.sensor_pos_x,

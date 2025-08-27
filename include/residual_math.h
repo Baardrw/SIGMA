@@ -11,9 +11,8 @@ namespace cg = cooperative_groups;
 
 namespace residualMath {
 
-__host__ std::vector<real_t>
-compute_residuals(line_t &line, const std::vector<Vector3> &K,
-                  const std::vector<real_t> &drift_radius,
+__host__ std::vector<Vector3>
+compute_residuals(line_t &line, measurement_cache_t *measurement_cache,
                   const int num_mdt_measurements,
                   const int num_rpc_measurements);
 
@@ -30,7 +29,6 @@ __device__ void compute_residual(line_t &line, const int tid,
                                  const measurement_cache_t &measurement_cache,
                                  residual_cache_t &residual_cache);
 
-
 /**
  * More optimized version of computing all the residuals in different functions,
  * avoids function calling overheads,
@@ -41,11 +39,10 @@ __device__ void compute_residual(line_t &line, const int tid,
  */
 __device__ void
 update_residual_cache(line_t &line, const int tid,
-                          const int num_mdt_measurements,
-                          const int num_rpc_measurements,
-                          const measurement_cache_t &measurement_cache,
-                          residual_cache_t &residual_cache);
-
+                      const int num_mdt_measurements,
+                      const int num_rpc_measurements,
+                      const measurement_cache_t &measurement_cache,
+                      residual_cache_t &residual_cache);
 
 /**
  * Computes the gradient vector for the line via a shfl_down reduction
@@ -55,16 +52,22 @@ update_residual_cache(line_t &line, const int tid,
  */
 template <unsigned int TILE_SIZE>
 __device__ Vector4 get_gradient(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
+                                int num_measurements,
                                 const Vector3 &inverse_sigma_squared,
                                 residual_cache_t &residual_cache);
 
+/** Computes the hessian matrix for the line via a shfl_down reduction
+ * across the threads in the bucket_tile.
+ * WARNING: the hessian is only valid in thread 0 of the bucket_tile.
+ */
 template <unsigned int TILE_SIZE>
 __device__ Matrix4 get_hessian(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
+                               int num_measurements,
                                const Vector3 &inverse_sigma_squared,
                                residual_cache_t &residual_cache);
 
-__host__ real_t get_chi2(const std::vector<real_t> &residuals,
-                         const std::vector<real_t> &inverse_sigma_squared);
+__host__ real_t get_chi2(const std::vector<Vector3> &residuals,
+                         const std::vector<Vector3> &inverse_sigma_squared);
 /**
  * Computes the chi2 for the line given the measurements in the bucket
  *
@@ -72,6 +75,7 @@ __host__ real_t get_chi2(const std::vector<real_t> &residuals,
  */
 template <unsigned int TILE_SIZE>
 __device__ real_t get_chi2(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
+                           int num_measurements,
                            const Vector3 &inverse_sigma_squared,
                            residual_cache_t &residual_cache);
 } // namespace residualMath
