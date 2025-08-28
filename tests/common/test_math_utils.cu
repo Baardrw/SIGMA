@@ -94,8 +94,8 @@ std::vector<real_t> calculate_chi2(Data &h_data, int num_buckets) {
     lineMath::create_line(x0, y0, phi, theta, line);
     lineMath::compute_D_ortho(line);
 
-    measurement_cache_t *measurement_cache =
-        new measurement_cache_t[end_idx - start_idx];
+    measurement_cache_t<false> *measurement_cache =
+        new measurement_cache_t<false>[end_idx - start_idx];
 
     // Get MDT measurements
     for (int j = start_idx; j < rpc_idx; j++) {

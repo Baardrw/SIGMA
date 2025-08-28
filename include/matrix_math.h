@@ -8,16 +8,14 @@
 using namespace cooperative_groups;
 namespace cg = cooperative_groups;
 
-// Overload for matrix multiplication
+namespace matrixMath {
 __device__ inline Vector3 elementwise_mult(const Vector3 &v1,
                                            const Vector3 &v2) {
   return Vector3(v1(0) * v2(0), v1(1) * v2(1), v1(2) * v2(2));
 }
 
-namespace matrixMath {
 __device__ bool invert_2x2(const Matrix2 &input, Matrix2 &output);
 
-template <int TILE_SIZE>
 __device__ bool invert_4x4(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
                            Matrix4 &input, Matrix4 &output);
 

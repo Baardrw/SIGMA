@@ -20,7 +20,7 @@
 #include "../tests/common/test_common_includes.h"
 #include "../tests/common/test_data_utils.h"
 
-#define NUM_BUCKETS 50 // Number of desired bins will be determined by this
+#define NUM_BUCKETS 1000 // Number of desired bins will be determined by this
 
 // Forward declaration of the kernel we want to test
 __global__ void seed_lines(struct Data *data, int num_buckets);
@@ -283,7 +283,7 @@ bool benchmark_seed_line_with_round_robin_data() {
   const int warpSize = 32;
   const int cg_group_size =
       16; // Use 16 threads per warp for cooperative groups
-  const int warps_per_block = 5;
+  const int warps_per_block = 6;
   const int block_x = warpSize * warps_per_block;
   const int num_blocks =
       desired_buckets / (warps_per_block * (warpSize / cg_group_size)) +

@@ -100,25 +100,61 @@ typedef struct line {
   Vector3 ddD_ortho[3]; // theta theta, phi phi, theta phi
 } line_t;
 
-typedef struct {
+template <bool Overflow> struct residual_cache_t {
   Vector3 residual; // Residual for the measurement
   Vector3 delta_residual[4];
   Vector3 dd_residual[3]; // THETA_THETA, PHI_PHI, THETA_PHI
-} residual_cache_t;
+  Vector3 inverse_sigma_squared;
+};
 
-typedef struct {
+template <> struct residual_cache_t<true> {
+  // Reisudla measurments for the non overflowed data
+  Vector3 residual; // Residual for the measurement
+  Vector3 delta_residual[4];
+  Vector3 dd_residual[3]; // THETA_THETA, PHI_PHI, THETA_PHI
+  Vector3 inverse_sigma_squared;
+
+  // Residuals for the overflowed data
+  Vector3 rpc_residual; // Residual for the measurement
+  Vector3 rpc_delta_residual[4];
+  Vector3 rpc_dd_residual[3]; // THETA_THETA, PHI_PHI, THETA_PHI
+  Vector3 rpc_inverse_sigma_squared;
+};
+
+
+// In the general case (Overflow == false) there will be no overlap between rpc and mdt,
+// so we can save memory by sharing the measurement cache
+template <bool Overflow> struct measurement_cache_t {
   // MDT measurements
   Vector3 connection_vector; // Vector from the z plane intersection to the
-                              // sensor position
+                             // sensor position
   real_t drift_radius;       // MDT drift radius measurement
 
   // Shared
   Vector3 sensor_direction; // RPC sensor direction, or MDT wire direction
-                             // (each thread is only assigned one type of
-                             // measurement, so no conflicts will occour)
+                            // (each thread is only assigned one type of
+                            // measurement, so no conflicts will occour)
   Vector3 sensor_pos; // Sensor position, for RPC this gives the hit position,
-                       // for mdt it gives the tube center
+                      // for mdt it gives the tube center
 
   // RPC measurements
   Vector3 plane_normal; // RPC plane normal
-} measurement_cache_t;
+};
+
+
+template<> struct measurement_cache_t<true> {
+  // MDT measurements
+  Vector3 connection_vector; // Vector from the z plane intersection to the
+                             // sensor position
+  real_t drift_radius;       // MDT drift radius measurement
+
+  // Shared
+  Vector3 sensor_direction; // MDT wire direction
+  Vector3 sensor_pos; // Sensor position, for RPC this gives the hit position,
+                      // for mdt it gives the tube center
+
+  // RPC measurements
+  Vector3 strip_direction;
+  Vector3 strip_pos;
+  Vector3 plane_normal; // RPC plane normal
+};

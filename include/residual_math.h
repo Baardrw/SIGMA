@@ -12,7 +12,7 @@ namespace cg = cooperative_groups;
 namespace residualMath {
 
 __host__ std::vector<Vector3>
-compute_residuals(line_t &line, measurement_cache_t *measurement_cache,
+compute_residuals(line_t &line, measurement_cache_t<false> *measurement_cache,
                   const int num_mdt_measurements,
                   const int num_rpc_measurements);
 
@@ -23,11 +23,12 @@ compute_residuals(line_t &line, measurement_cache_t *measurement_cache,
  * WARNING: lineMath::update_derivatives Must be called before this function
  * is called to ensure that line.D_ortho is up to date.
  */
+template <bool Overflow>
 __device__ void compute_residual(line_t &line, const int tid,
                                  const int num_mdt_measurements,
                                  const int num_rpc_measurements,
-                                 const measurement_cache_t &measurement_cache,
-                                 residual_cache_t &residual_cache);
+                                 const measurement_cache_t<Overflow> &measurement_cache,
+                                 residual_cache_t<Overflow> &residual_cache);
 
 /**
  * More optimized version of computing all the residuals in different functions,
@@ -37,12 +38,13 @@ __device__ void compute_residual(line_t &line, const int tid,
  * This function fills the residual_cache with all the residuals, delta
  residuals, and delta delta residuals
  */
+template <bool Overflow>
 __device__ void
 update_residual_cache(line_t &line, const int tid,
                       const int num_mdt_measurements,
                       const int num_rpc_measurements,
-                      const measurement_cache_t &measurement_cache,
-                      residual_cache_t &residual_cache);
+                      const measurement_cache_t<Overflow> &measurement_cache,
+                      residual_cache_t<Overflow> &residual_cache);
 
 /**
  * Computes the gradient vector for the line via a shfl_down reduction
@@ -50,21 +52,20 @@ update_residual_cache(line_t &line, const int tid,
  *
  * WARNING: the gradient is only valid in thread 0 of the bucket_tile.
  */
-template <unsigned int TILE_SIZE>
+template <bool Overflow>
 __device__ Vector4 get_gradient(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
                                 int num_measurements,
-                                const Vector3 &inverse_sigma_squared,
-                                residual_cache_t &residual_cache);
+                                residual_cache_t<Overflow> &residual_cache);
 
 /** Computes the hessian matrix for the line via a shfl_down reduction
  * across the threads in the bucket_tile.
- * WARNING: the hessian is only valid in thread 0 of the bucket_tile.
+ *
+ * The hessian is broadcast to all threads in the bucket_tile.
  */
-template <unsigned int TILE_SIZE>
+template <bool Overflow>
 __device__ Matrix4 get_hessian(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
                                int num_measurements,
-                               const Vector3 &inverse_sigma_squared,
-                               residual_cache_t &residual_cache);
+                               residual_cache_t<Overflow> &residual_cache);
 
 __host__ real_t get_chi2(const std::vector<Vector3> &residuals,
                          const std::vector<Vector3> &inverse_sigma_squared);
@@ -73,9 +74,8 @@ __host__ real_t get_chi2(const std::vector<Vector3> &residuals,
  *
  * @returns Chi2 value for the line, ONLY ON THREAD 0
  */
-template <unsigned int TILE_SIZE>
+template <bool Overflow>
 __device__ real_t get_chi2(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
                            int num_measurements,
-                           const Vector3 &inverse_sigma_squared,
-                           residual_cache_t &residual_cache);
+                           residual_cache_t<Overflow> &residual_cache);
 } // namespace residualMath

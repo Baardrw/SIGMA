@@ -17,80 +17,59 @@ __device__ bool invert_2x2(const Matrix2 &input, Matrix2 &output) {
   return true;
 }
 
-template <int TILE_SIZE>
 __device__ __forceinline__ bool
 adjugate_inversion(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
                    const Matrix4 &input_matrix, Matrix4 &inv_out) {
-
   // Initialize variables for ALL threads (prevents garbage in shuffles)
   real_t cofactor = 0.0f;
   real_t inv_element = 0.0f;
   bool success = true;
 
-  // Only threads 0-15 do computation, others keep default values
-  if (bucket_tile.thread_rank() < 16) {
-    int row = bucket_tile.thread_rank() / 4;
-    int col = bucket_tile.thread_rank() % 4;
+  int row = bucket_tile.thread_rank() / 4;
+  int col = bucket_tile.thread_rank() % 4;
 
-    // ==== Matrix of minors ====
-    real_t minor = 0.0f;
-    Matrix3 minor_matrix;
-    for (int i = 0; i < 4; ++i) {
-      for (int j = 0; j < 4; ++j) {
-        if (i == row || j == col)
-          continue;
-        int minor_row = (i < row) ? i : i - 1;
-        int minor_col = (j < col) ? j : j - 1;
-        minor_matrix(minor_row, minor_col) = input_matrix(i, j);
-      }
+  // ==== Matrix of minors ====
+  real_t minor = 0.0f;
+  Matrix3 minor_matrix;
+  for (int i = 0; i < 4; ++i) {
+    for (int j = 0; j < 4; ++j) {
+      if (i == row || j == col)
+        continue;
+      int minor_row = (i < row) ? i : i - 1;
+      int minor_col = (j < col) ? j : j - 1;
+      minor_matrix(minor_row, minor_col) = input_matrix(i, j);
     }
-    minor = minor_matrix.determinant();
-
-    // ==== Cofactor matrix ====
-    cofactor = ((row + col) % 2 == 0) ? minor : -minor;
   }
+  minor = minor_matrix.determinant();
+
+  // ==== Cofactor matrix ====
+  cofactor = ((row + col) % 2 == 0) ? minor : -minor;
 
   // ==== Determinant calculation - ALL threads participate in shuffles ====
   real_t det = 0.0f;
-  if (bucket_tile.thread_rank() == 0) { // Only thread 0 computes
 #pragma unroll
-    for (int j = 0; j < 4; ++j) {
-
-      bucket_tile.sync();
-      real_t cofactor_0j = bucket_tile.shfl(cofactor, j); // ALL participate
-      det += input_matrix(0, j) * cofactor_0j;
-    }
-  } else {
-// Useless threads still participate in shuffles
-#pragma unroll
-    for (int j = 0; j < 4; ++j) {
-      bucket_tile.sync();
-      bucket_tile.shfl(cofactor, j); // Participate but ignore result
-    }
+  for (int j = 0; j < 4; ++j) {
+    bucket_tile.sync();
+    real_t cofactor_0j = bucket_tile.shfl(cofactor, j);
+    det += input_matrix(0, j) * cofactor_0j;
   }
 
+  // Only bucket 0 has a valid determinant, broadcast to all threads
   bucket_tile.sync();
-  det = bucket_tile.shfl(det, 0); // ALL threads get determinant
+  det = bucket_tile.shfl(det, 0);
 
   // Check singularity
   if (fabsf(det) < 1e-20) {
     success = false;
-    if (bucket_tile.thread_rank() == 16) {
+    if (bucket_tile.thread_rank() == 0) {
       printf("Matrix is singular, cannot invert. Det: %.15e\n", det);
     }
   }
 
   // ==== Adjugate and inversion - threads 0-15 only ====
-  if (bucket_tile.thread_rank() < 16 && success) {
-    int row = bucket_tile.thread_rank() / 4;
-    int col = bucket_tile.thread_rank() % 4;
-    real_t adjugate =
-        bucket_tile.shfl(cofactor, col * 4 + row); // ALL participate
-    inv_element = adjugate / det;
-  } else {
-    // Useless threads participate in shuffle
-    bucket_tile.shfl(cofactor, 0); // Dummy shuffle
-  }
+  real_t adjugate =
+      bucket_tile.shfl(cofactor, col * 4 + row); // ALL participate
+  inv_element = adjugate / det;
 
 // ==== Result collection - ALL threads participate ====
 #pragma unroll
@@ -107,24 +86,17 @@ adjugate_inversion(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
   return success;
 }
 
-template <int TILE_SIZE>
 __device__ bool invert_4x4(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
                            Matrix4 &input, Matrix4 &output) {
 
   input += Matrix4::Identity() * 1e-6;
-  bool status = adjugate_inversion<TILE_SIZE>(bucket_tile, input, output);
+  bool status = adjugate_inversion(bucket_tile, input, output);
   bucket_tile.sync();
 
   return status;
 }
 
 // Declare template instantiations
-template __device__ bool invert_4x4<16>(cg::thread_block_tile<16> &bucket_tile,
-                                        Matrix4 &input, Matrix4 &output);
-
-template __device__ bool invert_4x4<32>(cg::thread_block_tile<32> &bucket_tile,
-                                        Matrix4 &input, Matrix4 &output);
-
 __global__ void test_invert_4x4(Matrix4 *input_matrices,
                                 Matrix4 *output_matrices, int *results,
                                 int num_matrices) {
@@ -143,7 +115,7 @@ __global__ void test_invert_4x4(Matrix4 *input_matrices,
   Matrix4 output;
 
   // Call your invert function
-  bool success = invert_4x4<16>(bucket_tile, input, output);
+  bool success = invert_4x4(bucket_tile, input, output);
 
   // Store results (only one thread per block needs to write)
   if (bucket_tile.thread_rank() == 0) {
