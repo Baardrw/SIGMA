@@ -1,3 +1,5 @@
+#include "config.h"
+#include "data_structures.h"
 #include "test_math_utils.h"
 
 void calculate_bucket_answer(BucketGroundTruth &bucket_ground_truth,
@@ -69,6 +71,7 @@ void calculate_bucket_answer(BucketGroundTruth &bucket_ground_truth,
   }
 }
 
+// TODO: update to 3D
 std::vector<real_t> calculate_chi2(Data &h_data, int num_buckets) {
 
   std::vector<real_t> chi2_values(num_buckets, 0.0f);
@@ -78,8 +81,8 @@ std::vector<real_t> calculate_chi2(Data &h_data, int num_buckets) {
     real_t phi = h_data.phi[i];
     real_t theta = h_data.theta[i];
 
-    std::vector<real_t> residuals;
-    std::vector<real_t> inverse_sigma_squared;
+    std::vector<Vector3> residuals;
+    std::vector<Vector3> inverse_sigma_squared;
 
     // Get the start and end indices for this bucket
     int start_idx = h_data.buckets[i * 3];
@@ -89,32 +92,49 @@ std::vector<real_t> calculate_chi2(Data &h_data, int num_buckets) {
     // Create line
     line_t line;
     lineMath::create_line(x0, y0, phi, theta, line);
-    lineMath::compute_D_ortho(line, {1, 0, 0});
+    lineMath::compute_D_ortho(line);
 
-    // Compute K
-    std::vector<Vector3> K;
+    measurement_cache_t<false> *measurement_cache =
+        new measurement_cache_t<false>[end_idx - start_idx];
+
+    // Get MDT measurements
     for (int j = start_idx; j < rpc_idx; j++) {
       Vector3 K_j;
       K_j << h_data.sensor_pos_x[j] - x0, h_data.sensor_pos_y[j] - y0,
           h_data.sensor_pos_z[j];
 
-      K.push_back(K_j);
-    }
-
-    // Get drift radius for this bucket
-    std::vector<real_t> drift_radius;
-    for (int j = start_idx; j < rpc_idx; j++) {
-      drift_radius.push_back(h_data.drift_radius[j]);
+      measurement_cache[j - start_idx].connection_vector = K_j;
+      measurement_cache[j - start_idx].drift_radius = h_data.drift_radius[j];
     }
 
     // get inverse sigma squared
     for (int j = start_idx; j < end_idx; j++) {
-      inverse_sigma_squared.push_back(1.0f /
-                                      (h_data.sigma[j] * h_data.sigma[j]));
+      inverse_sigma_squared.push_back(Vector3(1/ h_data.sigma_x[j] / h_data.sigma_x[j],
+                                               1/ h_data.sigma_y[j] / h_data.sigma_y[j],
+                                               1/ h_data.sigma_z[j] / h_data.sigma_z[j]));
+    }
+
+    // Get RPC measurments
+    for (int j = rpc_idx; j < end_idx; j++) {
+      Vector3 P;
+      P << h_data.sensor_pos_x[j], h_data.sensor_pos_y[j],
+          h_data.sensor_pos_z[j];
+
+      Vector3 sensor_direction;
+      sensor_direction << h_data.sensor_dir_x[j], h_data.sensor_dir_y[j],
+          h_data.sensor_dir_z[j];
+
+      Vector3 plane_normal;
+      plane_normal << h_data.plane_normal_x[j], h_data.plane_normal_y[j],
+          h_data.plane_normal_z[j];
+
+      measurement_cache[j - start_idx].sensor_pos = P;
+      measurement_cache[j - start_idx].sensor_direction = sensor_direction;
+      measurement_cache[j - start_idx].plane_normal = plane_normal;
     }
 
     residuals = residualMath::compute_residuals(
-        line, K, drift_radius, rpc_idx - start_idx, end_idx - rpc_idx);
+        line, measurement_cache, rpc_idx - start_idx, end_idx - rpc_idx);
 
     real_t chi2 = residualMath::get_chi2(residuals, inverse_sigma_squared);
     chi2_values[i] = chi2;

@@ -1,9 +1,11 @@
 #include <Eigen/Dense>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <map>
 #include <set>
 
+#include "config.h"
 #include "data_structures.h"
 #include "test_common_includes.h"
 #include "test_math_utils.h"
@@ -149,7 +151,15 @@ void populate_h_data(Data &h_data,
   h_data.sensor_pos_y = new real_t[total_measurements];
   h_data.sensor_pos_z = new real_t[total_measurements];
   h_data.drift_radius = new real_t[total_measurements];
-  h_data.sigma = new real_t[total_measurements];
+  h_data.sigma_x = new real_t[total_measurements];
+  h_data.sigma_y = new real_t[total_measurements];
+  h_data.sigma_z = new real_t[total_measurements];
+  h_data.sensor_dir_x = new real_t[total_measurements];
+  h_data.sensor_dir_y = new real_t[total_measurements];
+  h_data.sensor_dir_z = new real_t[total_measurements];
+  h_data.plane_normal_x = new real_t[total_measurements];
+  h_data.plane_normal_y = new real_t[total_measurements];
+  h_data.plane_normal_z = new real_t[total_measurements];
 
   int measurement_idx = 0;
 
@@ -182,8 +192,11 @@ void populate_h_data(Data &h_data,
       real_t dz = hit.surface_pos_z - hit.poca_z;
       h_data.drift_radius[measurement_idx] = std::sqrt(dy * dy + dz * dz);
 
-      h_data.sigma[measurement_idx] =
-          1 / (EPSILON + h_data.drift_radius[measurement_idx]);
+      h_data.sigma_x[measurement_idx] = 1 / (h_data.drift_radius[measurement_idx] + EPSILON);
+      h_data.sigma_y[measurement_idx] =
+          h_data.sigma_x[measurement_idx]; // so that it matches with the 1D
+                                           // residual version
+      h_data.sigma_z[measurement_idx] = 1.0f;
       measurement_idx++;
     }
 
@@ -198,7 +211,20 @@ void populate_h_data(Data &h_data,
 
       // RPC doesn't have drift radius, set to 0
       h_data.drift_radius[measurement_idx] = 0.0f;
-      h_data.sigma[measurement_idx] = 0.1f;
+      h_data.sigma_x[measurement_idx] = 1 / std::sqrt(12);
+      h_data.sigma_y[measurement_idx] = h_data.sigma_x[measurement_idx];
+      h_data.sigma_z[measurement_idx] = 1.0f;
+
+      // Generate plane normal and strip direction
+      Vector3 plane_normal(0, 0, 1);
+      Vector3 sensor_dir(1, 0, 0);
+      h_data.sensor_dir_x[measurement_idx] = sensor_dir.x();
+      h_data.sensor_dir_y[measurement_idx] = sensor_dir.y();
+      h_data.sensor_dir_z[measurement_idx] = sensor_dir.z();
+      h_data.plane_normal_x[measurement_idx] = plane_normal.x();
+      h_data.plane_normal_y[measurement_idx] = plane_normal.y();
+      h_data.plane_normal_z[measurement_idx] = plane_normal.z();
+
       measurement_idx++;
     }
   }
@@ -271,12 +297,26 @@ Data copy_to_device(const Data &h_data, int num_measurements, int num_buckets) {
       cudaMalloc(&d_data.sensor_pos_z, num_measurements * sizeof(real_t)));
   CUDA_CHECK(
       cudaMalloc(&d_data.drift_radius, num_measurements * sizeof(real_t)));
-  CUDA_CHECK(cudaMalloc(&d_data.sigma, num_measurements * sizeof(real_t)));
+  CUDA_CHECK(cudaMalloc(&d_data.sigma_x, num_measurements * sizeof(real_t)));
+  CUDA_CHECK(cudaMalloc(&d_data.sigma_y, num_measurements * sizeof(real_t)));
+  CUDA_CHECK(cudaMalloc(&d_data.sigma_z, num_measurements * sizeof(real_t)));
   CUDA_CHECK(cudaMalloc(&d_data.buckets, num_buckets * 3 * sizeof(int)));
   CUDA_CHECK(cudaMalloc(&d_data.theta, num_buckets * sizeof(real_t)));
   CUDA_CHECK(cudaMalloc(&d_data.phi, num_buckets * sizeof(real_t)));
   CUDA_CHECK(cudaMalloc(&d_data.x0, num_buckets * sizeof(real_t)));
   CUDA_CHECK(cudaMalloc(&d_data.y0, num_buckets * sizeof(real_t)));
+  CUDA_CHECK(
+      cudaMalloc(&d_data.plane_normal_x, num_measurements * sizeof(real_t)));
+  CUDA_CHECK(
+      cudaMalloc(&d_data.plane_normal_y, num_measurements * sizeof(real_t)));
+  CUDA_CHECK(
+      cudaMalloc(&d_data.plane_normal_z, num_measurements * sizeof(real_t)));
+  CUDA_CHECK(
+      cudaMalloc(&d_data.sensor_dir_x, num_measurements * sizeof(real_t)));
+  CUDA_CHECK(
+      cudaMalloc(&d_data.sensor_dir_y, num_measurements * sizeof(real_t)));
+  CUDA_CHECK(
+      cudaMalloc(&d_data.sensor_dir_z, num_measurements * sizeof(real_t)));
 
   // Copy data to device
   CUDA_CHECK(cudaMemcpy(d_data.sensor_pos_x, h_data.sensor_pos_x,
@@ -291,11 +331,36 @@ Data copy_to_device(const Data &h_data, int num_measurements, int num_buckets) {
   CUDA_CHECK(cudaMemcpy(d_data.drift_radius, h_data.drift_radius,
                         num_measurements * sizeof(real_t),
                         cudaMemcpyHostToDevice));
-  CUDA_CHECK(cudaMemcpy(d_data.sigma, h_data.sigma,
+  CUDA_CHECK(cudaMemcpy(d_data.sigma_x, h_data.sigma_x,
+                        num_measurements * sizeof(real_t),
+                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(d_data.sigma_y, h_data.sigma_y,
+                        num_measurements * sizeof(real_t),
+                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(d_data.sigma_z, h_data.sigma_z,
                         num_measurements * sizeof(real_t),
                         cudaMemcpyHostToDevice));
   CUDA_CHECK(cudaMemcpy(d_data.buckets, h_data.buckets,
                         num_buckets * 3 * sizeof(int), cudaMemcpyHostToDevice));
+
+  CUDA_CHECK(cudaMemcpy(d_data.plane_normal_x, h_data.plane_normal_x,
+                        num_measurements * sizeof(real_t),
+                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(d_data.plane_normal_y, h_data.plane_normal_y,
+                        num_measurements * sizeof(real_t),
+                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(d_data.plane_normal_z, h_data.plane_normal_z,
+                        num_measurements * sizeof(real_t),
+                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(d_data.sensor_dir_x, h_data.sensor_dir_x,
+                        num_measurements * sizeof(real_t),
+                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(d_data.sensor_dir_y, h_data.sensor_dir_y,
+                        num_measurements * sizeof(real_t),
+                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(d_data.sensor_dir_z, h_data.sensor_dir_z,
+                        num_measurements * sizeof(real_t),
+                        cudaMemcpyHostToDevice));
 
   return d_data;
 }
@@ -316,7 +381,9 @@ void cleanup_host(Data &h_data) {
   delete[] h_data.sensor_pos_y;
   delete[] h_data.sensor_pos_z;
   delete[] h_data.drift_radius;
-  delete[] h_data.sigma;
+  delete[] h_data.sigma_x;
+  delete[] h_data.sigma_y;
+  delete[] h_data.sigma_z;
   delete[] h_data.buckets;
   delete[] h_data.theta;
   delete[] h_data.phi;
@@ -329,7 +396,9 @@ void cleanup_device(Data &d_data) {
   cudaFree(d_data.sensor_pos_y);
   cudaFree(d_data.sensor_pos_z);
   cudaFree(d_data.drift_radius);
-  cudaFree(d_data.sigma);
+  cudaFree(d_data.sigma_x);
+  cudaFree(d_data.sigma_y);
+  cudaFree(d_data.sigma_z);
   cudaFree(d_data.buckets);
   cudaFree(d_data.theta);
   cudaFree(d_data.phi);
