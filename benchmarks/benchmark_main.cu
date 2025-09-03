@@ -285,7 +285,7 @@ bool benchmark_seed_line_with_round_robin_data() {
   const int warpSize = 32;
   const int cg_group_size =
       16; // Use 16 threads per warp for cooperative groups
-  const int warps_per_block = 6;
+  const int warps_per_block = 10;
   const int block_x = warpSize * warps_per_block;
   const int num_blocks =
       desired_buckets / (warps_per_block * (warpSize / cg_group_size)) +
@@ -294,18 +294,18 @@ bool benchmark_seed_line_with_round_robin_data() {
            : 1);
 
   std::cout << "Launching kernel with " << num_blocks << " blocks and "
-            << block_x << " threads per block." << std::endl;
+            << block_x << " threads per block ." << std::endl;
   const dim3 block_size(block_x, 1, 1);
-  const dim3 grid_size(num_blocks, 1, 1);
+  size_t shared_mem_size = block_x * sizeof(real_t) * 19; // Measurement cache
+
 
   // Warm up run (optional - helps with consistent timing)
-  seed_lines<<<grid_size, block_size>>>(device_data_ptr, desired_buckets);
+  seed_lines<<<num_blocks, block_size, shared_mem_size>>>(device_data_ptr, desired_buckets);
   CUDA_CHECK(cudaDeviceSynchronize());
   CUDA_CHECK(cudaGetLastError());
 
   // Set up shared memory 
-  // size_t shared_mem_size = block_x * sizeof(real_t
-  fit_lines<<<num_blocks, block_size>>>(device_data_ptr, desired_buckets);
+  fit_lines<<<num_blocks, block_size, shared_mem_size>>>(device_data_ptr, desired_buckets);
   CUDA_CHECK(cudaDeviceSynchronize());
   CUDA_CHECK(cudaGetLastError());
 
@@ -317,8 +317,8 @@ bool benchmark_seed_line_with_round_robin_data() {
 
   for (int run = 0; run < num_runs; run++) {
     CUDA_CHECK(cudaEventRecord(kernel_start, 0));
-    seed_lines<<<num_blocks, block_size>>>(device_data_ptr, desired_buckets);
-    fit_lines<<<num_blocks, block_size>>>(device_data_ptr, desired_buckets);
+    seed_lines<<<num_blocks, block_size, shared_mem_size>>>(device_data_ptr, desired_buckets);
+    fit_lines<<<num_blocks, block_size, shared_mem_size>>>(device_data_ptr, desired_buckets);
     CUDA_CHECK(cudaEventRecord(kernel_end, 0));
     CUDA_CHECK(cudaEventSynchronize(kernel_end));
 

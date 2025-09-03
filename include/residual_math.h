@@ -27,7 +27,7 @@ template <bool Overflow>
 __device__ void compute_residual(line_t &line, const int tid,
                                  const int num_mdt_measurements,
                                  const int num_rpc_measurements,
-                                 const measurement_cache_t<Overflow> &measurement_cache,
+                                 measurement_cache_t<Overflow> &measurement_cache,
                                  residual_cache_t<Overflow> &residual_cache);
 
 /**
@@ -43,7 +43,7 @@ __device__ void
 update_residual_cache(line_t &line, const int tid,
                       const int num_mdt_measurements,
                       const int num_rpc_measurements,
-                      const measurement_cache_t<Overflow> &measurement_cache,
+                      measurement_cache_t<Overflow> &measurement_cache,
                       residual_cache_t<Overflow> &residual_cache);
 
 /**

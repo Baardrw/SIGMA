@@ -1,26 +1,27 @@
-# 18/08 
+=== BENCHMARK RESULTS (Round-Robin Duplication) ===
 
-2D functional multi bucket per warp + overflow handling
-
-CG size 16
-
-=== BENCHMARK RESULTS ===
+--- Data Summary ---
+Original buckets loaded:     181
+Total buckets created:       1000
+Duplication factor:          5.525x
+Total measurements:          13137
 
 --- Timing Breakdown ---
-Setup time:              323.220 ms
-Data loading time:       992.992 ms
-Host to Device copy:     121.686 ms
-Device to Host copy:     4.379 ms
-Total time:              2071.666 ms
+Data loading time:           327.662 ms
+Round-robin setup time:      3.214 ms
+Host to Device copy:         1.633 ms
+Device to Host copy:         0.124 ms
+Total time:                  511.594 ms
 
 --- Kernel Performance (average of 10 runs) ---
-Average kernel time:     56.090 ms
-Min kernel time:         54.065 ms
-Max kernel time:         68.839 ms
-Standard deviation:      4.369 ms
-Coefficient of variation: 7.790%
+Average kernel time:         15.263 ms
+Min kernel time:             14.914 ms
+Max kernel time:             15.962 ms
+Standard deviation:          0.345 ms
+Coefficient of variation:    2.260%
 
 --- Performance Metrics ---
-Measurements per second: 4.990e+08
-Buckets per second:      3.564e+07
-Est. memory bandwidth:   13.543 GB/s
+Measurements per second:     8.595e+05
+Buckets per second:          6.543e+04
+Est. memory bandwidth:       0.023 GB/s
+Benchmark completed successfully!

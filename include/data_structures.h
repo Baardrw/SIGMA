@@ -121,40 +121,86 @@ template <> struct residual_cache_t<true> {
   Vector3 rpc_inverse_sigma_squared;
 };
 
-
-// In the general case (Overflow == false) there will be no overlap between rpc and mdt,
-// so we can save memory by sharing the measurement cache
+// In the general case (Overflow == false) there will be no overlap between rpc
+// and mdt, so we can save memory by sharing the measurement cache
 template <bool Overflow> struct measurement_cache_t {
   // MDT measurements
-  Vector3 connection_vector; // Vector from the z plane intersection to the
-                             // sensor position
-  real_t drift_radius;       // MDT drift radius measurement
+  Vector3 _connection_vector;
 
-  // Shared
-  Vector3 sensor_direction; // RPC sensor direction, or MDT wire direction
-                            // (each thread is only assigned one type of
-                            // measurement, so no conflicts will occour)
-  Vector3 sensor_pos; // Sensor position, for RPC this gives the hit position,
-                      // for mdt it gives the tube center
+  real_t *drift_radius; // MDT drift radius measurement
 
-  // RPC measurements
-  Vector3 plane_normal; // RPC plane normal
+  real_t *sensor_pos_x;
+  real_t *sensor_pos_y;
+  real_t *sensor_pos_z;
+
+  real_t *sensor_dir_x;
+  real_t *sensor_dir_y;
+  real_t *sensor_dir_z;
+
+  real_t *plane_normal_x;
+  real_t *plane_normal_y;
+  real_t *plane_normal_z;
+
+  __host__ __device__ Vector3 connection_vector() { return _connection_vector; }
+
+  __host__ __device__ Vector3 sensor_direction() {
+    return Vector3(*sensor_dir_x, *sensor_dir_y, *sensor_dir_z);
+  }
+
+  __host__ __device__ Vector3 sensor_pos() {
+    return Vector3(*sensor_pos_x, *sensor_pos_y, *sensor_pos_z);
+  }
+
+  __host__ __device__ Vector3 plane_normal() {
+    return Vector3(*plane_normal_x, *plane_normal_y, *plane_normal_z);
+  }
 };
 
+template <> struct measurement_cache_t<true> {
 
-template<> struct measurement_cache_t<true> {
-  // MDT measurements
-  Vector3 connection_vector; // Vector from the z plane intersection to the
-                             // sensor position
-  real_t drift_radius;       // MDT drift radius measurement
+  Vector3 _connection_vector;
 
-  // Shared
-  Vector3 sensor_direction; // MDT wire direction
-  Vector3 sensor_pos; // Sensor position, for RPC this gives the hit position,
-                      // for mdt it gives the tube center
+  real_t *drift_radius; // MDT drift radius measurement
 
-  // RPC measurements
-  Vector3 strip_direction;
-  Vector3 strip_pos;
-  Vector3 plane_normal; // RPC plane normal
+  real_t *sensor_pos_x;
+  real_t *sensor_pos_y;
+  real_t *sensor_pos_z;
+
+  real_t *sensor_dir_x;
+  real_t *sensor_dir_y;
+  real_t *sensor_dir_z;
+
+  real_t *plane_normal_x;
+  real_t *plane_normal_y;
+  real_t *plane_normal_z;
+
+  real_t *strip_direction_x;
+  real_t *strip_direction_y;
+  real_t *strip_direction_z;
+
+  real_t *strip_pos_x;
+  real_t *strip_pos_y;
+  real_t *strip_pos_z;
+
+  __host__ __device__ Vector3 connection_vector() { return _connection_vector; }
+
+  __host__ __device__ Vector3 sensor_direction() {
+    return Vector3(*sensor_dir_x, *sensor_dir_y, *sensor_dir_z);
+  }
+
+  __host__ __device__ Vector3 sensor_pos() {
+    return Vector3(*sensor_pos_x, *sensor_pos_y, *sensor_pos_z);
+  }
+
+  __host__ __device__ Vector3 strip_direction() {
+    return Vector3(*strip_direction_x, *strip_direction_y, *strip_direction_z);
+  }
+
+  __host__ __device__ Vector3 strip_pos() {
+    return Vector3(*strip_pos_x, *strip_pos_y, *strip_pos_z);
+  }
+
+  __host__ __device__ Vector3 plane_normal() {
+    return Vector3(*plane_normal_x, *plane_normal_y, *plane_normal_z);
+  }
 };

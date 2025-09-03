@@ -103,8 +103,8 @@ std::vector<real_t> calculate_chi2(Data &h_data, int num_buckets) {
       K_j << h_data.sensor_pos_x[j] - x0, h_data.sensor_pos_y[j] - y0,
           h_data.sensor_pos_z[j];
 
-      measurement_cache[j - start_idx].connection_vector = K_j;
-      measurement_cache[j - start_idx].drift_radius = h_data.drift_radius[j];
+      measurement_cache[j - start_idx].connection_vector() = K_j;
+      *measurement_cache[j - start_idx].drift_radius = h_data.drift_radius[j];
     }
 
     // get inverse sigma squared
@@ -128,9 +128,9 @@ std::vector<real_t> calculate_chi2(Data &h_data, int num_buckets) {
       plane_normal << h_data.plane_normal_x[j], h_data.plane_normal_y[j],
           h_data.plane_normal_z[j];
 
-      measurement_cache[j - start_idx].sensor_pos = P;
-      measurement_cache[j - start_idx].sensor_direction = sensor_direction;
-      measurement_cache[j - start_idx].plane_normal = plane_normal;
+      measurement_cache[j - start_idx].sensor_pos() = P;
+      measurement_cache[j - start_idx].sensor_direction() = sensor_direction;
+      measurement_cache[j - start_idx].plane_normal() = plane_normal;
     }
 
     residuals = residualMath::compute_residuals(

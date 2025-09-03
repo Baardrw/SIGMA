@@ -78,25 +78,67 @@ initialize_bucket_indexing(struct Data *data, int bucket_index,
 template <bool Overflow>
 __device__ __forceinline__ void
 load_measurement_cache(struct Data *data, const int thread_data_index,
-                       real_t x0, real_t y0, const int num_mdt_measurements,
-                       measurement_cache_t<Overflow> &measurement_cache) {
-  // clang-format off
-    // Get sensor position
-    Vector3 sensor_pos = SENSOR_POS(data, thread_data_index);
+                       const int num_mdt_measurements,
+                       measurement_cache_t<Overflow> &measurement_cache,
+                       real_t *shared_mem) {
+  int block_size = blockDim.x;
 
-    // Initialize measurement cache
-    measurement_cache.connection_vector = sensor_pos - Vector3(x0, y0, 0.0f);
-    measurement_cache.drift_radius      = DRIFT_RADIUS(data, thread_data_index);
-    measurement_cache.sensor_direction  = SENSOR_DIRECTION(data, thread_data_index);
-    measurement_cache.sensor_pos        = sensor_pos;
-    measurement_cache.plane_normal      = PLANE_NORMAL(data, thread_data_index);
+  // Load global memory into shared memory
+  // clang-format off
+  shared_mem[threadIdx.x] = data->drift_radius[thread_data_index];
+
+  shared_mem[block_size + threadIdx.x] = data->sensor_pos_x[thread_data_index];
+  shared_mem[2 * block_size + threadIdx.x] = data->sensor_pos_y[thread_data_index];
+  shared_mem[3 * block_size + threadIdx.x] = data->sensor_pos_z[thread_data_index];
+
+  shared_mem[4 * block_size + threadIdx.x] = data->sensor_dir_x[thread_data_index];
+  shared_mem[5 * block_size + threadIdx.x] = data->sensor_dir_y[thread_data_index];
+  shared_mem[6 * block_size + threadIdx.x] = data->sensor_dir_z[thread_data_index];
+
+  shared_mem[7 * block_size + threadIdx.x] = data->plane_normal_x[thread_data_index];
+  shared_mem[8 * block_size + threadIdx.x] = data->plane_normal_y[thread_data_index];
+  shared_mem[9 * block_size + threadIdx.x] = data->plane_normal_z[thread_data_index]; 
+
+  measurement_cache.drift_radius = &shared_mem[threadIdx.x];
+  measurement_cache.sensor_pos_x = &shared_mem[block_size + threadIdx.x];
+  measurement_cache.sensor_pos_y = &shared_mem[2 * block_size + threadIdx.x];
+  measurement_cache.sensor_pos_z = &shared_mem[3 * block_size + threadIdx.x];
+
+  measurement_cache.sensor_dir_x = &shared_mem[4 * block_size + threadIdx.x];
+  measurement_cache.sensor_dir_y = &shared_mem[5 * block_size + threadIdx.x];
+  measurement_cache.sensor_dir_z = &shared_mem[6 * block_size + threadIdx.x];
+
+  measurement_cache.plane_normal_x = &shared_mem[7 * block_size + threadIdx.x];
+  measurement_cache.plane_normal_y = &shared_mem[8 * block_size + threadIdx.x];
+  measurement_cache.plane_normal_z = &shared_mem[9 * block_size + threadIdx.x];
   // clang-format on
 
   if constexpr (Overflow) {
     // clang-format off
-    measurement_cache.strip_direction = SENSOR_DIRECTION(data, thread_data_index + num_mdt_measurements);
-    measurement_cache.strip_pos       = SENSOR_POS(data, thread_data_index + num_mdt_measurements);
-    measurement_cache.plane_normal      = PLANE_NORMAL(data, thread_data_index + num_mdt_measurements);
+    shared_mem[10 * block_size + threadIdx.x] = data->sensor_dir_x[thread_data_index + num_mdt_measurements];
+    shared_mem[11 * block_size + threadIdx.x] = data->sensor_dir_y[thread_data_index + num_mdt_measurements];
+    shared_mem[12 * block_size + threadIdx.x] = data->sensor_dir_z[thread_data_index + num_mdt_measurements];
+
+    shared_mem[13 * block_size + threadIdx.x] = data->sensor_pos_x[thread_data_index + num_mdt_measurements];
+    shared_mem[14 * block_size + threadIdx.x] = data->sensor_pos_y[thread_data_index + num_mdt_measurements];
+    shared_mem[15 * block_size + threadIdx.x] = data->sensor_pos_z[thread_data_index + num_mdt_measurements];
+
+    shared_mem[16 * block_size + threadIdx.x] = data->plane_normal_x[thread_data_index + num_mdt_measurements];
+    shared_mem[17 * block_size + threadIdx.x] = data->plane_normal_y[thread_data_index + num_mdt_measurements];
+    shared_mem[18 * block_size + threadIdx.x] = data->plane_normal_z[thread_data_index + num_mdt_measurements];
+
+    measurement_cache.strip_direction_x = &shared_mem[10 * block_size + threadIdx.x];
+    measurement_cache.strip_direction_y = &shared_mem[11 * block_size + threadIdx.x];
+    measurement_cache.strip_direction_z = &shared_mem[12 * block_size + threadIdx.x];
+
+    measurement_cache.strip_pos_x = &shared_mem[13 * block_size + threadIdx.x];
+    measurement_cache.strip_pos_y = &shared_mem[14 * block_size + threadIdx.x];
+    measurement_cache.strip_pos_z = &shared_mem[15 * block_size + threadIdx.x];
+
+    measurement_cache.plane_normal_x = &shared_mem[16 * block_size + threadIdx.x];
+    measurement_cache.plane_normal_y = &shared_mem[17 * block_size + threadIdx.x];
+    measurement_cache.plane_normal_z = &shared_mem[18 * block_size + threadIdx.x];
+
     // clang-format on
   }
 }
@@ -180,11 +222,13 @@ seed_line_impl(struct Data *data, const int thread_data_index, int bucket_index,
 
   // Evaluate each line candidate
   real_t chi2_arr[4];
-  for (int j = 0; j < 4; j++) {
-    measurement_cache_t<Overflow> measurement_cache;
-    load_measurement_cache<Overflow>(data, thread_data_index, x0[j], y0[j],
-                                     num_mdt_measurements, measurement_cache);
+  extern __shared__ real_t shared_mem[];
+  measurement_cache_t<Overflow> measurement_cache;
+  load_measurement_cache<Overflow>(data, thread_data_index,
+                                   num_mdt_measurements, measurement_cache,
+                                   shared_mem);
 
+  for (int j = 0; j < 4; j++) {
     residual_cache_t<Overflow> residual_cache;
     line_t line;
 
@@ -203,8 +247,8 @@ seed_line_impl(struct Data *data, const int thread_data_index, int bucket_index,
     lineMath::create_line(x0[j], y0[j], phi, theta[j], line);
     lineMath::compute_D_ortho(line);
 
-    measurement_cache.connection_vector =
-        measurement_cache.sensor_pos - line.S0;
+    measurement_cache._connection_vector =
+        measurement_cache.sensor_pos() - line.S0;
 
     residualMath::compute_residual<Overflow>(
         line, bucket_tile.thread_rank(), num_mdt_measurements,
@@ -249,10 +293,11 @@ fit_line_impl(struct Data *data, const int thread_data_index, int bucket_index,
   const int num_measurements = num_mdt_measurements + num_rpc_measurements;
 
   // Construct measurement cache
+  extern __shared__ real_t shared_mem[];
   measurement_cache_t<Overflow> measurement_cache;
-  load_measurement_cache<Overflow>(data, thread_data_index, params[X0],
-                                   params[Y0], num_mdt_measurements,
-                                   measurement_cache);
+  load_measurement_cache<Overflow>(data, thread_data_index,
+                                   num_mdt_measurements, measurement_cache,
+                                   shared_mem);
 
   // Newton-Raphson iteration
   int iteration = 0;
@@ -277,8 +322,8 @@ fit_line_impl(struct Data *data, const int thread_data_index, int bucket_index,
     lineMath::create_line(params[X0], params[Y0], params[PHI], params[THETA],
                           line);
     lineMath::update_derivatives(line);
-    measurement_cache.connection_vector =
-        measurement_cache.sensor_pos - line.S0;
+    measurement_cache._connection_vector =
+        measurement_cache.sensor_pos() - line.S0;
 
     residualMath::update_residual_cache<Overflow>(
         line, bucket_tile.thread_rank(), num_mdt_measurements,
@@ -384,6 +429,7 @@ execute_work(WorkType work_type, Data *data, const int thread_data_index,
 __device__ __forceinline__ void partition_and_execute_work(struct Data *data,
                                                            int num_buckets,
                                                            WorkType work_type) {
+
   const unsigned int global_thread_id = blockIdx.x * blockDim.x + threadIdx.x;
   const int primary_bucket = global_thread_id / TILE_SIZE;
   const int secondary_bucket =

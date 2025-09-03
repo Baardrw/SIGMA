@@ -21,8 +21,8 @@ compute_residuals(line_t &line, measurement_cache_t<false> *measurement_cache,
   Vector3 W(1, 0, 0);
 
   for (int i = 0; i < num_mdt_measurements; i++) {
-    Vector3 K = measurement_cache[i].connection_vector;
-    real_t drift_radius = measurement_cache[i].drift_radius;
+    Vector3 K = measurement_cache[i].connection_vector();
+    real_t drift_radius = *measurement_cache[i].drift_radius;
 
     real_t cross_product = K.cross(line.D_ortho).dot(W);
     residuals.push_back(Vector3(abs(cross_product) - drift_radius, 0.0f, 0.0f));
@@ -30,12 +30,12 @@ compute_residuals(line_t &line, measurement_cache_t<false> *measurement_cache,
 
   for (int i = num_mdt_measurements;
        i < num_mdt_measurements + num_rpc_measurements; i++) {
-    const Vector3 &P = measurement_cache[i].sensor_pos;
-    const Vector3 &N = measurement_cache[i].plane_normal;
+    const Vector3 &P = measurement_cache[i].sensor_pos();
+    const Vector3 &N = measurement_cache[i].plane_normal();
     const Vector3 &S0 = line.S0;
     const Vector3 &D = line.D;
     const real_t inverse_N_dot_D = 1.0f / N.dot(D);
-    const Vector3 v1 = measurement_cache[i].sensor_direction;
+    const Vector3 v1 = measurement_cache[i].sensor_direction();
     const Vector3 v2 = N.cross(v1);
     real_t traveled_distance = (P.dot(N) - S0.dot(N)) * inverse_N_dot_D;
     Vector3 distance_vector = S0 + traveled_distance * D - P;
@@ -60,7 +60,7 @@ compute_mdt_residuals(line_t &line, const Vector3 &K, real_t drift_radius,
 template <bool Overflow>
 __device__ __forceinline__ void
 compute_rpc_residuals(line_t &line,
-                      const measurement_cache_t<Overflow> &measurement_cache,
+                      measurement_cache_t<Overflow> &measurement_cache,
                       residual_cache_t<Overflow> &residual_cache) {
 
   // Reference to store computed residuals in the cache
@@ -74,11 +74,11 @@ compute_rpc_residuals(line_t &line,
   }
 
   // Local vars
-  Vector3 P = measurement_cache.sensor_pos;
-  const Vector3 &N = measurement_cache.plane_normal;
+  Vector3 P = measurement_cache.sensor_pos();
+  const Vector3 &N = measurement_cache.plane_normal();
   const Vector3 &S0 = line.S0;
   const Vector3 &D = line.D;
-  Vector3 v1 = measurement_cache.sensor_direction;
+  Vector3 v1 = measurement_cache.sensor_direction();
   Vector3 v2 = N.cross(v1); // IDK i guess this is bending?
 
   const real_t inverse_N_dot_D = 1.0f / N.dot(D);
@@ -86,8 +86,8 @@ compute_rpc_residuals(line_t &line,
   if constexpr (Overflow) {
     // If there is an overflow there is a contention for the shared variables
     // so we need handle that with different variables for rpc than mdt
-    P = measurement_cache.strip_pos;
-    v1 = measurement_cache.strip_direction;
+    P = measurement_cache.strip_pos();
+    v1 = measurement_cache.strip_direction();
     v2 = N.cross(v1);
   }
 
@@ -119,7 +119,7 @@ template <bool Overflow>
 __device__ void
 compute_residual(line_t &line, const int tid, const int num_mdt_measurements,
                  const int num_rpc_measurements,
-                 const measurement_cache_t<Overflow> &measurement_cache,
+                 measurement_cache_t<Overflow> &measurement_cache,
                  residual_cache_t<Overflow> &residual_cache) {
 
   // Zero out residual cache
@@ -134,8 +134,8 @@ compute_residual(line_t &line, const int tid, const int num_mdt_measurements,
 
   // Compute MDT residuals for threads handling MDT measurements
   if (tid < num_mdt_measurements) {
-    compute_mdt_residuals<Overflow>(line, measurement_cache.connection_vector,
-                                    measurement_cache.drift_radius,
+    compute_mdt_residuals<Overflow>(line, measurement_cache.connection_vector(),
+                                    *measurement_cache.drift_radius,
                                     residual_cache);
   }
 
@@ -148,11 +148,11 @@ compute_residual(line_t &line, const int tid, const int num_mdt_measurements,
 // TODO: Remove unneccessary calculations from the cross product computation
 template <bool Overflow>
 __device__ __forceinline__ void compute_straw_residuals_and_derivatives(
-    line_t &line, const measurement_cache_t<Overflow> &measurement_cache,
+    line_t &line, measurement_cache_t<Overflow> &measurement_cache,
     residual_cache_t<Overflow> &residual_cache) {
   // Local vars
-  const Vector3 &K = measurement_cache.connection_vector;
-  const real_t drift_radius = measurement_cache.drift_radius;
+  const Vector3 &K = measurement_cache.connection_vector();
+  const real_t drift_radius = *measurement_cache.drift_radius;
   const Vector3 &W = MDT_DIR;
 
   // ================ Residual ================
@@ -185,7 +185,7 @@ __device__ __forceinline__ void compute_straw_residuals_and_derivatives(
 
 template <bool Overflow>
 __device__ __forceinline__ void compute_strip_residuals_and_derivatives(
-    line_t &line, const measurement_cache_t<Overflow> &measurement_cache,
+    line_t &line, measurement_cache_t<Overflow> &measurement_cache,
     residual_cache_t<Overflow> &residual_cache) {
   // References to store computed residuals in the correct cache
   // to account for the data overflow. If there is an overflow one thread
@@ -200,11 +200,11 @@ __device__ __forceinline__ void compute_strip_residuals_and_derivatives(
   }
 
   // Local vars
-  Vector3 P = measurement_cache.sensor_pos;
-  const Vector3 &N = measurement_cache.plane_normal;
+  Vector3 P = measurement_cache.sensor_pos();
+  const Vector3 &N = measurement_cache.plane_normal();
   const Vector3 &S0 = line.S0;
   const Vector3 &D = line.D;
-  Vector3 v1 = measurement_cache.sensor_direction;
+  Vector3 v1 = measurement_cache.sensor_direction();
   Vector3 v2 = N.cross(v1); // IDK i guess this is bending?
 
   const real_t inverse_N_dot_D = 1.0f / N.dot(D);
@@ -212,8 +212,8 @@ __device__ __forceinline__ void compute_strip_residuals_and_derivatives(
   if constexpr (Overflow) {
     // If there is an overflow there is a contention for the shared variables
     // so we need handle that with different variables for rpc than mdt
-    P = measurement_cache.strip_pos;
-    v1 = measurement_cache.strip_direction;
+    P = measurement_cache.strip_pos();
+    v1 = measurement_cache.strip_direction();
     v2 = N.cross(v1);
   }
 
@@ -275,7 +275,7 @@ __device__ void
 update_residual_cache(line_t &line, const int tid,
                       const int num_mdt_measurements,
                       const int num_rpc_measurements,
-                      const measurement_cache_t<Overflow> &measurement_cache,
+                      measurement_cache_t<Overflow> &measurement_cache,
                       residual_cache_t<Overflow> &residual_cache) {
 
 // Zero out the residual cache
@@ -400,8 +400,8 @@ __device__ Vector4 get_gradient(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
   return gradient;
 }
 
-__device__  __forceinline__ Vector3 get_delta_delta_residual(int param1_idx, int param2_idx,
-                                            Vector3 *dd_residual) {
+__device__ __forceinline__ Vector3
+get_delta_delta_residual(int param1_idx, int param2_idx, Vector3 *dd_residual) {
   if (param1_idx == Y0 || param2_idx == Y0 || param1_idx == X0 ||
       param2_idx == X0) {
     return Vector3(0.0f, 0.0f, 0.0f); // No delta delta residual for Y0 or X0
@@ -482,28 +482,29 @@ template __device__ void
 update_residual_cache<true>(line_t &line, const int tid,
                             const int num_mdt_measurements,
                             const int num_rpc_measurements,
-                            const measurement_cache_t<true> &measurement_cache,
+                            measurement_cache_t<true> &measurement_cache,
                             residual_cache_t<true> &residual_cache);
 
-template __device__ void update_residual_cache<false>(
-    line_t &line, const int tid, const int num_mdt_measurements,
-    const int num_rpc_measurements,
-    const measurement_cache_t<false> &measurement_cache,
-    residual_cache_t<false> &residual_cache);
+template __device__ void
+update_residual_cache<false>(line_t &line, const int tid,
+                             const int num_mdt_measurements,
+                             const int num_rpc_measurements,
+                             measurement_cache_t<false> &measurement_cache,
+                             residual_cache_t<false> &residual_cache);
 
 // compute_residual instantiations
 template __device__ void
 compute_residual<true>(line_t &line, const int tid,
                        const int num_mdt_measurements,
                        const int num_rpc_measurements,
-                       const measurement_cache_t<true> &measurement_cache,
+                       measurement_cache_t<true> &measurement_cache,
                        residual_cache_t<true> &residual_cache);
 
 template __device__ void
 compute_residual<false>(line_t &line, const int tid,
                         const int num_mdt_measurements,
                         const int num_rpc_measurements,
-                        const measurement_cache_t<false> &measurement_cache,
+                        measurement_cache_t<false> &measurement_cache,
                         residual_cache_t<false> &residual_cache);
 
 // get_chi2 instantiations
