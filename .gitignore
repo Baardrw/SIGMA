@@ -1,1 +1,5 @@
 build
+.cache
+*.ncu-rep
+.clangd
+.vscode/*

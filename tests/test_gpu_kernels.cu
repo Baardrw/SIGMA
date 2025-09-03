@@ -1,6 +1,7 @@
 #include <Eigen/Dense>
 #include <cassert>
 #include <cmath>
+#include <cstddef>
 #include <cuda_runtime.h>
 #include <iostream>
 #include <math.h>
@@ -26,29 +27,32 @@ __global__ void fit_lines(struct Data *data, int num_buckets);
 
 // Helper function to run GPU fitting operations
 std::pair<std::vector<real_t>, std::vector<real_t>>
-run_gpu_fitting(Data &d_data, Data &h_data, int num_buckets) {
+run_gpu_fitting(Data *device_data_ptr, Data &d_data, Data &h_data,
+                int num_buckets) {
 
   // Launch kernel with timing
   const int warpSize = 32;
   const int cg_group_size =
       16; // Use 16 threads per warp for cooperative groups
-  const int warps_per_block = 10;
+  const int warps_per_block = 1;
   const int block_size = warpSize * warps_per_block;
   const int num_blocks =
       num_buckets / (warps_per_block * (warpSize / cg_group_size)) +
-      (num_buckets % (warps_per_block * (warpSize / cg_group_size)) == 0
-           ? 0
-           : 1);
+      (num_buckets % (warps_per_block * (warpSize / cg_group_size)) == 0 ? 0
+                                                                         : 1);
+
+  std::cout << "D Data pointer: " << &d_data << " H data pointer: " << &h_data
+            << std::endl;
 
   // Run seed fitting
-  seed_lines<<<num_blocks, block_size>>>(&d_data, num_buckets);
+  seed_lines<<<num_blocks, block_size>>>(device_data_ptr, num_buckets);
   CUDA_CHECK(cudaDeviceSynchronize());
   CUDA_CHECK(cudaGetLastError());
   copy_results_to_host(h_data, d_data, num_buckets);
   std::vector<real_t> chi2_seed = calculate_chi2(h_data, num_buckets);
 
   // Run iterative fitting
-  fit_lines<<<num_blocks, block_size>>>(&d_data, num_buckets);
+  fit_lines<<<num_blocks, block_size>>>(device_data_ptr, num_buckets);
   CUDA_CHECK(cudaDeviceSynchronize());
   CUDA_CHECK(cudaGetLastError());
   copy_results_to_host(h_data, d_data, num_buckets);
@@ -207,14 +211,25 @@ bool analyze_fit_improvement(const std::vector<real_t> &chi2_seed,
   return success;
 }
 
-// Main test functions
+void debug_data_struct(struct Data &h_data, Data *d_data) {
+  printf("=== Data Struct Layout ===\n");
+  printf("sizeof(Data): %zu\n", sizeof(Data));
+  printf("offset of buckets: %zu\n", offsetof(Data, buckets));
+  printf("offset of sensor_pos_x: %zu\n", offsetof(Data, sensor_pos_x));
+  printf("offset of theta: %zu\n", offsetof(Data, theta));
+  printf("offset of phi: %zu\n", offsetof(Data, phi));
+
+  // Print actual values before kernel launch
+  printf("h_data.buckets = %p\n", h_data.buckets);
+  printf("d_data.buckets = %p\n", d_data->buckets);
+}
 
 bool test_seed_lines_csv(int start = 0, int end = 100) {
   std::cout << "Running test_seed_lines_csv..." << std::endl;
 
   // File paths
-  const std::string mdt_filename = "/shared/src/SIGMA/mdt_hits.csv";
-  const std::string rpc_filename = "/shared/src/SIGMA/rpc_hits.csv";
+  const std::string mdt_filename = "mdt_hits.csv";
+  const std::string rpc_filename = "rpc_hits.csv";
 
   // Load Raw data from CSV files
   auto [bucket_ids, mdt_bucket, rpc_bucket, bucket_ground_truths] =
@@ -240,8 +255,12 @@ bool test_seed_lines_csv(int start = 0, int end = 100) {
             << std::endl;
 
   // Run GPU computations
-  Data d_data = copy_to_device(h_data, total_measurements, num_buckets);
-  auto [chi2_seed, chi2_fit] = run_gpu_fitting(d_data, h_data, num_buckets);
+  Data d_data;
+  Data *device_data_ptr =
+      copy_to_device(h_data, d_data, total_measurements, num_buckets);
+
+  auto [chi2_seed, chi2_fit] =
+      run_gpu_fitting(device_data_ptr, d_data, h_data, num_buckets);
 
   // Validate results
   bool geometric_validation =

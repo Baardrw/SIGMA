@@ -196,8 +196,8 @@ bool benchmark_seed_line_with_round_robin_data() {
             << std::endl;
 
   // File paths - update these to your actual file paths
-  std::string mdt_filename = "/shared/src/SIGMA/mdt_hits.csv";
-  std::string rpc_filename = "/shared/src/SIGMA/rpc_hits.csv";
+  std::string mdt_filename = "mdt_hits.csv";
+  std::string rpc_filename = "rpc_hits.csv";
 
   // Load ALL available data first (events 0-100)
   int start_event = 0;
@@ -270,7 +270,9 @@ bool benchmark_seed_line_with_round_robin_data() {
 
   // Copy to device with timing
   auto start_h2d = std::chrono::high_resolution_clock::now();
-  Data d_data = copy_to_device(h_data, total_measurements, desired_buckets);
+  Data d_data;
+  Data *device_data_ptr =
+      copy_to_device(h_data, d_data, total_measurements, desired_buckets);
   CUDA_CHECK(cudaDeviceSynchronize()); // Ensure copy is complete
   auto end_h2d = std::chrono::high_resolution_clock::now();
 
@@ -297,10 +299,13 @@ bool benchmark_seed_line_with_round_robin_data() {
   const dim3 grid_size(num_blocks, 1, 1);
 
   // Warm up run (optional - helps with consistent timing)
-  seed_lines<<<grid_size, block_size>>>(&d_data, desired_buckets);
+  seed_lines<<<grid_size, block_size>>>(device_data_ptr, desired_buckets);
   CUDA_CHECK(cudaDeviceSynchronize());
   CUDA_CHECK(cudaGetLastError());
-  fit_lines<<<num_blocks, block_size>>>(&d_data, desired_buckets);
+
+  // Set up shared memory 
+  // size_t shared_mem_size = block_x * sizeof(real_t
+  fit_lines<<<num_blocks, block_size>>>(device_data_ptr, desired_buckets);
   CUDA_CHECK(cudaDeviceSynchronize());
   CUDA_CHECK(cudaGetLastError());
 
@@ -312,8 +317,8 @@ bool benchmark_seed_line_with_round_robin_data() {
 
   for (int run = 0; run < num_runs; run++) {
     CUDA_CHECK(cudaEventRecord(kernel_start, 0));
-    seed_lines<<<num_blocks, block_size>>>(&d_data, desired_buckets);
-    fit_lines<<<num_blocks, block_size>>>(&d_data, desired_buckets);
+    seed_lines<<<num_blocks, block_size>>>(device_data_ptr, desired_buckets);
+    fit_lines<<<num_blocks, block_size>>>(device_data_ptr, desired_buckets);
     CUDA_CHECK(cudaEventRecord(kernel_end, 0));
     CUDA_CHECK(cudaEventSynchronize(kernel_end));
 

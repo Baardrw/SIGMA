@@ -4,6 +4,7 @@
 #include <iostream>
 #include <map>
 #include <set>
+#include <string>
 
 #include "config.h"
 #include "data_structures.h"
@@ -192,7 +193,8 @@ void populate_h_data(Data &h_data,
       real_t dz = hit.surface_pos_z - hit.poca_z;
       h_data.drift_radius[measurement_idx] = std::sqrt(dy * dy + dz * dz);
 
-      h_data.sigma_x[measurement_idx] = 1 / (h_data.drift_radius[measurement_idx] + EPSILON);
+      h_data.sigma_x[measurement_idx] =
+          1 / (h_data.drift_radius[measurement_idx] + EPSILON);
       h_data.sigma_y[measurement_idx] =
           h_data.sigma_x[measurement_idx]; // so that it matches with the 1D
                                            // residual version
@@ -285,10 +287,10 @@ void setup_h_data_buckets(Data &h_data, std::vector<long int> &bucket_ids,
   }
 }
 
-Data copy_to_device(const Data &h_data, int num_measurements, int num_buckets) {
-  Data d_data;
+Data *copy_to_device(const Data &h_data, Data &d_data, int num_measurements,
+                     int num_buckets) {
 
-  // Allocate device memory
+  // Allocate all device memory and store pointers in temp_data
   CUDA_CHECK(
       cudaMalloc(&d_data.sensor_pos_x, num_measurements * sizeof(real_t)));
   CUDA_CHECK(
@@ -340,6 +342,7 @@ Data copy_to_device(const Data &h_data, int num_measurements, int num_buckets) {
   CUDA_CHECK(cudaMemcpy(d_data.sigma_z, h_data.sigma_z,
                         num_measurements * sizeof(real_t),
                         cudaMemcpyHostToDevice));
+
   CUDA_CHECK(cudaMemcpy(d_data.buckets, h_data.buckets,
                         num_buckets * 3 * sizeof(int), cudaMemcpyHostToDevice));
 
@@ -362,10 +365,16 @@ Data copy_to_device(const Data &h_data, int num_measurements, int num_buckets) {
                         num_measurements * sizeof(real_t),
                         cudaMemcpyHostToDevice));
 
-  return d_data;
+  // Allocate data struct on device
+  Data *device_struct_ptr;
+
+  CUDA_CHECK(cudaMalloc(&device_struct_ptr, sizeof(Data)));
+  CUDA_CHECK(cudaMemcpy(device_struct_ptr, &d_data, sizeof(Data),
+                        cudaMemcpyHostToDevice));
+  return device_struct_ptr;
 }
 
-void copy_results_to_host(Data &h_data, const Data &d_data, int num_buckets) {
+void copy_results_to_host(Data &h_data, Data &d_data, int num_buckets) {
   CUDA_CHECK(cudaMemcpy(h_data.theta, d_data.theta,
                         num_buckets * sizeof(real_t), cudaMemcpyDeviceToHost));
   CUDA_CHECK(cudaMemcpy(h_data.phi, d_data.phi, num_buckets * sizeof(real_t),

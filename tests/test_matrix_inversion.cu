@@ -370,7 +370,6 @@ bool test_single_known_matrix() {
             << (accuracy_ok && identity_ok ? "SUCCESS" : "FAILURE")
             << std::endl;
 
-cleanup:
   CUDA_CHECK(cudaFree(d_input_matrix));
   CUDA_CHECK(cudaFree(d_output_matrix));
   CUDA_CHECK(cudaFree(d_result));

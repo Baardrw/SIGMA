@@ -35,6 +35,7 @@ void cleanup_host(Data &h_data);
 
 void cleanup_device(Data &d_data);
 
-void copy_results_to_host(Data &h_data, const Data &d_data, int num_buckets);
+void copy_results_to_host(Data &h_data, Data &d_data, int num_buckets);
 
-Data copy_to_device(const Data &h_data, int num_measurements, int num_buckets);
+Data *copy_to_device(const Data &h_data, Data &d_data, int num_measurements,
+                     int num_buckets);

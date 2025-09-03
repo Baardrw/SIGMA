@@ -27,8 +27,8 @@ __constant__ real_t rho_1_comb[4] = {1, 1, -1, -1};
 // Utility Functions
 // ============================================================================
 
-__host__ __device__ __forceinline__ void estimate_phi(struct Data *data, int rpc_start,
-                                             int bucket_end, real_t &phi) {
+__host__ __device__ __forceinline__ void
+estimate_phi(struct Data *data, int rpc_start, int bucket_end, real_t &phi) {
   // Get RPC positions
   real_t rpc_0_x = data->sensor_pos_x[rpc_start];
   real_t rpc_0_y = data->sensor_pos_y[rpc_start];
@@ -58,6 +58,9 @@ __device__ __forceinline__ void
 initialize_bucket_indexing(struct Data *data, int bucket_index,
                            int &bucket_start, int &rpc_start, int &bucket_end,
                            int &thread_data_index) {
+
+  // Debug prints BEFORE accessing memory
+
   bucket_start = data->buckets[bucket_index * 3];
   rpc_start = data->buckets[bucket_index * 3 + 1];
   bucket_end = data->buckets[bucket_index * 3 + 2];
@@ -98,8 +101,8 @@ load_measurement_cache(struct Data *data, const int thread_data_index,
   }
 }
 
-__device__ __forceinline__ Vector3 get_inverse_sigma_squared(const int index,
-                                             struct Data *data) {
+__device__ __forceinline__ Vector3
+get_inverse_sigma_squared(const int index, struct Data *data) {
   Vector3 sigma = SIGMA(data, index);
   Vector3 sigma_squared = matrixMath::elementwise_mult(sigma, sigma);
 #pragma unroll
@@ -116,8 +119,6 @@ __device__ __forceinline__ void
 seed_line_impl(struct Data *data, const int thread_data_index, int bucket_index,
                int bucket_start, int rpc_start, int bucket_end,
                cg::thread_block_tile<TILE_SIZE> &bucket_tile) {
-
-  // Line parameter arrays
   real_t phi = 0.0f;
   real_t theta[4], x0[4], y0[4];
 
@@ -380,8 +381,9 @@ execute_work(WorkType work_type, Data *data, const int thread_data_index,
 // Main Work Partitioning Function
 // ============================================================================
 
-__device__ __forceinline__ void partition_and_execute_work(struct Data *data, int num_buckets,
-                                           WorkType work_type) {
+__device__ __forceinline__ void partition_and_execute_work(struct Data *data,
+                                                           int num_buckets,
+                                                           WorkType work_type) {
   const unsigned int global_thread_id = blockIdx.x * blockDim.x + threadIdx.x;
   const int primary_bucket = global_thread_id / TILE_SIZE;
   const int secondary_bucket =
