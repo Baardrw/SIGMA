@@ -298,17 +298,22 @@ bool benchmark_seed_line_with_round_robin_data() {
   const dim3 block_size(block_x, 1, 1);
   const dim3 grid_size(num_blocks, 1, 1);
 
+  const size_t shared_mem_size = sizeof(real_t) * block_x * 54;
+  std::cout << "Using " << shared_mem_size / 1024 << " KB of shared memory"
+            << std::endl;
+
   // Warm up run (optional - helps with consistent timing)
-  seed_lines<<<grid_size, block_size>>>(device_data_ptr, desired_buckets);
+  seed_lines<<<grid_size, block_size, shared_mem_size>>>(device_data_ptr, desired_buckets);
   CUDA_CHECK(cudaDeviceSynchronize());
   CUDA_CHECK(cudaGetLastError());
 
-  // Set up shared memory 
+  // Set up shared memory
   // size_t shared_mem_size = block_x * sizeof(real_t
-  fit_lines<<<num_blocks, block_size>>>(device_data_ptr, desired_buckets);
+  fit_lines<<<num_blocks, block_size, shared_mem_size>>>(device_data_ptr, desired_buckets);
   CUDA_CHECK(cudaDeviceSynchronize());
   CUDA_CHECK(cudaGetLastError());
-
+  return true;
+  
   // Timed runs
   const int num_runs = 10; // Run multiple times for better statistics
   std::vector<float> kernel_times;

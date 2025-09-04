@@ -120,15 +120,15 @@ compute_residual(line_t &line, const int tid, const int num_mdt_measurements,
                  const measurement_cache_t<Overflow> &measurement_cache,
                  residual_cache_t &residual_cache) {
 
-  // Zero out residual cache
-#pragma unroll
-  for (int i = 0; i < 3; i++) {
-    residual_cache.residual[i] = 0.0f;
+  //   // Zero out residual cache
+  // #pragma unroll
+  //   for (int i = 0; i < 3; i++) {
+  //     residual_cache.residual[i] = 0.0f;
 
-    if constexpr (Overflow) {
-      residual_cache.rpc_residual[i] = 0.0f;
-    }
-  }
+  //     if constexpr (Overflow) {
+  //       residual_cache.rpc_residual[i] = 0.0f;
+  //     }
+  //   }
 
   // Compute MDT residuals for threads handling MDT measurements
   if (tid < num_mdt_measurements) {
@@ -169,7 +169,7 @@ __device__ __forceinline__ void compute_straw_residuals_and_derivatives(
 #pragma unroll
   for (int i = THETA; i <= PHI; i++) {
     INDEX_VECTOR_ARRAY(residual_cache.delta_residual, i)
-    [0][BENDING] += yz_residual_sign * K.cross(line.dD_ortho[i])[0];
+    [0][BENDING] = yz_residual_sign * K.cross(line.dD_ortho[i])[0];
   }
 
   // ================ Delta Delta Residual ===============
@@ -177,7 +177,7 @@ __device__ __forceinline__ void compute_straw_residuals_and_derivatives(
   for (int i = DD_THETA_THETA; i <= DD_THETA_PHI; i++) {
     // Compute the delta delta residuals
     INDEX_VECTOR_ARRAY(residual_cache.dd_residual, i)
-    [0][BENDING] += yz_residual_sign * K.cross(line.ddD_ortho[i])[0];
+    [0][BENDING] = yz_residual_sign * K.cross(line.ddD_ortho[i])[0];
   }
 }
 
@@ -226,8 +226,8 @@ __device__ __forceinline__ void compute_strip_residuals_and_derivatives(
   real_t traveled_distance = (P.dot(N) - S0.dot(N)) * inverse_N_dot_D;
   Vector3 Sm = S0 + traveled_distance * D;
 
-  residual[0][BENDING] += (Sm - P).dot(v2);
-  residual[0][NON_BENDING] += (Sm - P).dot(v1);
+  residual[0][BENDING] = (Sm - P).dot(v2);
+  residual[0][NON_BENDING] = (Sm - P).dot(v1);
 
   // ================ Delta Residual ===============
 #pragma unroll
@@ -235,8 +235,10 @@ __device__ __forceinline__ void compute_strip_residuals_and_derivatives(
     Vector3 delta_Sm =
         line.dS0[i - X0] - line.dS0[i - X0].dot(N) * inverse_N_dot_D * D;
 
-    delta_residual[i][BENDING] += (delta_Sm).dot(v2);
-    delta_residual[i][NON_BENDING] += (delta_Sm).dot(v1);
+    INDEX_VECTOR_ARRAY(delta_residual, i)
+    [0][BENDING] = (delta_Sm).dot(v2);
+    INDEX_VECTOR_ARRAY(delta_residual, i)
+    [0][NON_BENDING] = (delta_Sm).dot(v1);
   }
 
   Vector3 delta_SM[2];
@@ -249,8 +251,10 @@ __device__ __forceinline__ void compute_strip_residuals_and_derivatives(
 
     delta_SM[i] = delta_Sm;
 
-    delta_residual[i][BENDING] += (delta_Sm).dot(v2);
-    delta_residual[i][NON_BENDING] += (delta_Sm).dot(v1);
+    INDEX_VECTOR_ARRAY(delta_residual, i)
+    [0][BENDING] = (delta_Sm).dot(v2);
+    INDEX_VECTOR_ARRAY(delta_residual, i)
+    [0][NON_BENDING] = (delta_Sm).dot(v1);
   }
 
   // ================ Delta Delta Residual ===============
@@ -267,8 +271,10 @@ __device__ __forceinline__ void compute_strip_residuals_and_derivatives(
         N.dot(delta_D2) * inverse_N_dot_D * delta_SM[delta_1] -
         N.dot(delta_D1) * inverse_N_dot_D * delta_SM[delta_2];
 
-    dd_residual[i][BENDING] += (delta_Sm).dot(v2);
-    dd_residual[i][NON_BENDING] += (delta_Sm).dot(v1);
+    INDEX_VECTOR_ARRAY(dd_residual, i)
+    [0][BENDING] += (delta_Sm).dot(v2);
+    INDEX_VECTOR_ARRAY(dd_residual, i)
+    [0][NON_BENDING] += (delta_Sm).dot(v1);
   }
 }
 
@@ -280,17 +286,17 @@ update_residual_cache(line_t &line, const int tid,
                       const measurement_cache_t<Overflow> &measurement_cache,
                       residual_cache_t &residual_cache) {
 
-// Zero out the residual cache
-#pragma unroll
-  for (int i = 0; i < 3; i++) {
-    residual_cache.residual[i] = 0.0f;
-    residual_cache.dd_residual[i] = Vector3(0.0f, 0.0f, 0.0f);
+  // // Zero out the residual cache
+  // #pragma unroll
+  //   for (int i = 0; i < 3; i++) {
+  //     residual_cache.residual[i] = 0.0f;
+  //     residual_cache.dd_residual[i] = Vector3(0.0f, 0.0f, 0.0f);
 
-    if constexpr (Overflow) {
-      residual_cache.rpc_residual[i] = 0.0f;
-      residual_cache.rpc_dd_residual[i] = Vector3(0.0f, 0.0f, 0.0f);
-    }
-  }
+  //     if constexpr (Overflow) {
+  //       residual_cache.rpc_residual[i] = 0.0f;
+  //       residual_cache.rpc_dd_residual[i] = Vector3(0.0f, 0.0f, 0.0f);
+  //     }
+  //   }
 
 #pragma unroll
   for (int i = 0; i < 4; i++) {
@@ -355,12 +361,12 @@ __device__ real_t get_chi2(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
 
   real_t chi2 = 0.0f;
 
-  real_t chi_val = contract(residual_cache.residual, residual_cache.residual,
-                            residual_cache.inverse_sigma_squared);
+  real_t chi_val = contract(*residual_cache.residual, *residual_cache.residual,
+                            *residual_cache.inverse_sigma_squared);
   if constexpr (Overflow) {
     chi_val +=
-        contract(residual_cache.rpc_residual, residual_cache.rpc_residual,
-                 residual_cache.rpc_inverse_sigma_squared);
+        contract(*residual_cache.rpc_residual, *residual_cache.rpc_residual,
+                 *residual_cache.rpc_inverse_sigma_squared);
   }
 
   for (int i = bucket_tile.num_threads() / 2; i >= 1; i /= 2) {
@@ -381,13 +387,16 @@ __device__ Vector4 get_gradient(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
 #pragma unroll
   for (int i = 0; i < 4; i++) {
     gradient[i] =
-        2 * contract(residual_cache.residual, residual_cache.delta_residual[i],
-                     residual_cache.inverse_sigma_squared);
+        2 * contract(*residual_cache.residual,
+                     *INDEX_VECTOR_ARRAY(residual_cache.delta_residual, i),
+                     *residual_cache.inverse_sigma_squared);
 
     if constexpr (Overflow) {
-      gradient[i] += 2 * contract(residual_cache.rpc_residual,
-                                  residual_cache.rpc_delta_residual[i],
-                                  residual_cache.rpc_inverse_sigma_squared);
+      gradient[i] +=
+          2 *
+          contract(*residual_cache.rpc_residual,
+                   *INDEX_VECTOR_ARRAY(residual_cache.rpc_delta_residual, i),
+                   *residual_cache.rpc_inverse_sigma_squared);
     }
   }
 
@@ -404,15 +413,15 @@ __device__ Vector4 get_gradient(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
 
 __device__ __forceinline__ Vector3
 get_delta_delta_residual(int param1_idx, int param2_idx, Vector3 *dd_residual) {
-  if (param1_idx == Y0 || param2_idx == Y0 || param1_idx == X0 ||
+  if (param1_idx == Y0 || param1_idx == X0 || param2_idx == Y0 ||
       param2_idx == X0) {
     return Vector3(0.0f, 0.0f, 0.0f); // No delta delta residual for Y0 or X0
   } else if (param1_idx == THETA && param2_idx == THETA) {
-    return dd_residual[DD_THETA_THETA];
+    return *INDEX_VECTOR_ARRAY(dd_residual, DD_THETA_THETA);
   } else if (param1_idx == PHI && param2_idx == PHI) {
-    return dd_residual[DD_PHI_PHI];
+    return *INDEX_VECTOR_ARRAY(dd_residual, DD_PHI_PHI);
   } else {
-    return dd_residual[DD_THETA_PHI]; // Mixed derivative
+    return *INDEX_VECTOR_ARRAY(dd_residual, DD_THETA_PHI);
   }
 }
 
@@ -427,23 +436,26 @@ __device__ Matrix4 get_hessian(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
 #pragma unroll
     for (int j = 0; j < 4; j++) {
       if (j >= i) {
-        hessian(i, j) = 2 * (contract(residual_cache.delta_residual[i],
-                                      residual_cache.delta_residual[j],
-                                      residual_cache.inverse_sigma_squared) +
-                             contract(get_delta_delta_residual(
-                                          i, j, residual_cache.dd_residual),
-                                      residual_cache.residual,
-                                      residual_cache.inverse_sigma_squared));
+        hessian(i, j) =
+            2 * (contract(*INDEX_VECTOR_ARRAY(residual_cache.delta_residual, i),
+                          *INDEX_VECTOR_ARRAY(residual_cache.delta_residual, j),
+                          *residual_cache.inverse_sigma_squared) +
+                 contract(
+                     get_delta_delta_residual(i, j, residual_cache.dd_residual),
+                     *residual_cache.residual,
+                     *residual_cache.inverse_sigma_squared));
 
         if constexpr (Overflow) {
           hessian(i, j) +=
-              2 * (contract(residual_cache.rpc_delta_residual[i],
-                            residual_cache.rpc_delta_residual[j],
-                            residual_cache.rpc_inverse_sigma_squared) +
-                   contract(get_delta_delta_residual(
-                                i, j, residual_cache.rpc_dd_residual),
-                            residual_cache.rpc_residual,
-                            residual_cache.rpc_inverse_sigma_squared));
+              2 *
+              (contract(
+                   *INDEX_VECTOR_ARRAY(residual_cache.rpc_delta_residual, i),
+                   *INDEX_VECTOR_ARRAY(residual_cache.rpc_delta_residual, j),
+                   *residual_cache.rpc_inverse_sigma_squared) +
+               contract(get_delta_delta_residual(
+                            i, j, residual_cache.rpc_dd_residual),
+                        *residual_cache.rpc_residual,
+                        *residual_cache.rpc_inverse_sigma_squared));
         }
 
         hessian(j, i) = hessian(i, j); // Symmetric matrix

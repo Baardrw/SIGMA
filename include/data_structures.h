@@ -1,6 +1,5 @@
 #pragma once
 #include <Eigen/Dense>
-#include <__clang_cuda_builtin_vars.h>
 
 #include "config.h"
 

@@ -1,4 +1,3 @@
-#include <__clang_cuda_builtin_vars.h>
 #include <cmath>
 #include <cooperative_groups.h>
 #include <cuda_runtime.h>
