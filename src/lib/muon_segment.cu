@@ -1,3 +1,4 @@
+#include <__clang_cuda_builtin_vars.h>
 #include <cmath>
 #include <cooperative_groups.h>
 #include <cuda_runtime.h>
@@ -101,6 +102,24 @@ load_measurement_cache(struct Data *data, const int thread_data_index,
   }
 }
 
+// TODO S
+__device__ __forceinline__ void initialize_residual_cache(
+    residual_cache_t &residual_cache, Vector3 *residual_shared_mem,
+    const int thread_data_index, const int num_mdt_measurements) {
+
+  // clang-format off
+  residual_cache.residual = &residual_shared_mem[thread_data_index];
+  residual_cache.delta_residual = &residual_shared_mem[thread_data_index + blockDim.x];
+  residual_cache.dd_residual = &residual_shared_mem[thread_data_index + 5 * blockDim.x];
+  residual_cache.inverse_sigma_squared = &residual_shared_mem[thread_data_index + 8 * blockDim.x];
+
+  residual_cache.rpc_residual = &residual_shared_mem[thread_data_index + 9*blockDim.x];
+  residual_cache.rpc_delta_residual = &residual_shared_mem[thread_data_index + 10*blockDim.x];
+  residual_cache.rpc_dd_residual = &residual_shared_mem[thread_data_index + 14*blockDim.x];
+  residual_cache.rpc_inverse_sigma_squared = &residual_shared_mem[thread_data_index + 17* blockDim.x];
+  // clang-format on 
+}
+
 __device__ __forceinline__ Vector3
 get_inverse_sigma_squared(const int index, struct Data *data) {
   Vector3 sigma = SIGMA(data, index);
@@ -185,17 +204,20 @@ seed_line_impl(struct Data *data, const int thread_data_index, int bucket_index,
     load_measurement_cache<Overflow>(data, thread_data_index, x0[j], y0[j],
                                      num_mdt_measurements, measurement_cache);
 
-    residual_cache_t<Overflow> residual_cache;
+    extern __shared__ Vector3 residual_shared_mem[];
+    residual_cache_t residual_cache;
+    initialize_residual_cache(residual_cache, residual_shared_mem,
+                              thread_data_index, num_mdt_measurements);
     line_t line;
 
-    residual_cache.inverse_sigma_squared =
+    *residual_cache.inverse_sigma_squared =
         get_inverse_sigma_squared(thread_data_index, data);
 
     // If there is an overflow we need to load the RPC data into one of the mdt
     // threads and do computations for both on that thread
     if constexpr (Overflow) {
       if (bucket_tile.thread_rank() < num_rpc_measurements) {
-        residual_cache.rpc_inverse_sigma_squared = get_inverse_sigma_squared(
+        *residual_cache.rpc_inverse_sigma_squared = get_inverse_sigma_squared(
             rpc_start + bucket_tile.thread_rank(), data);
       }
     }
@@ -259,13 +281,17 @@ fit_line_impl(struct Data *data, const int thread_data_index, int bucket_index,
   bool error_flag = false; // Used to indicate an error to all other threads in
                            // case thread 0 has encountered an error
 
-  residual_cache_t<Overflow> residual_cache;
-  residual_cache.inverse_sigma_squared =
+  extern __shared__ Vector3 residual_shared_mem[];
+  residual_cache_t residual_cache;
+  initialize_residual_cache(residual_cache, residual_shared_mem,
+                            thread_data_index, num_mdt_measurements);
+
+  *residual_cache.inverse_sigma_squared =
       get_inverse_sigma_squared(thread_data_index, data);
 
   if constexpr (Overflow) {
     if (bucket_tile.thread_rank() < num_rpc_measurements) {
-      residual_cache.rpc_inverse_sigma_squared = get_inverse_sigma_squared(
+      *residual_cache.rpc_inverse_sigma_squared = get_inverse_sigma_squared(
           rpc_start + bucket_tile.thread_rank(), data);
     }
   }

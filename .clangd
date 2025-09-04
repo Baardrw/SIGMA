@@ -1,8 +1,8 @@
 CompileFlags:
   Add:
-    - --cuda-path=/usr/local/cuda  # or wherever CUDA is on your local machine
+    - --cuda-path=/usr/local/cuda # or wherever CUDA is on your local machine
     - -I/home/bard/Documents/work/cern/SIGMA/include
-    - -I/usr/include/eigen3          # Add this line
+    - -I/usr/include/eigen3 # Add this line
     - -xcuda
     - -std=c++17
     - --cuda-gpu-arch=sm_90
@@ -11,13 +11,14 @@ CompileFlags:
     - --generate-code*
     - --expt-extended-lambda
     - --expt-relaxed-constexpr
-    - --options-file                    # Remove NVCC-specific flags
-    - -arch=sm_86                       # Remove NVCC architecture flag
-    - -fmad=false                       # Remove NVCC math flag
-    - -rdc=true                         # Remove NVCC relocatable device code flag
-    - -rdc=*                            # Remove any rdc variations
-    - -arch=*                           # Remove any arch variations
-    - --relocatable-device-code*        # Remove long form of rdc
-    - -gencode*                         # Remove gencode flags
+    - --options-file # Remove NVCC-specific flags
+    - -arch=sm_86 # Remove NVCC architecture flag
+    - -fmad=false # Remove NVCC math flag
+    - -rdc=true # Remove NVCC relocatable device code flag
+    - -rdc=* # Remove any rdc variations
+    - -arch=* # Remove any arch variations
+    - --relocatable-device-code* # Remove long form of rdc
+    - -gencode* # Remove gencode flags
+    - --ptxas-options=-v
 Index:
   Background: Build
