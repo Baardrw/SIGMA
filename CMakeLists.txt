@@ -24,8 +24,8 @@ find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 
 # Set compiler flags
 # Set compiler flags
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -Wall -Wextra")
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3 -fmad=false --expt-relaxed-constexpr -diag-suppress=20015 -diag-suppress=20012")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -Wall -Wextra ")
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G -fmad=false --expt-relaxed-constexpr -diag-suppress=20015 -diag-suppress=20012")
 
 set(CMAKE_CUDA_ARCHITECTURES 86)
 

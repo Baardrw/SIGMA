@@ -11,6 +11,7 @@
 #include <numeric>
 #include <string>
 #include <vector>
+#include <nvtx3/nvToolsExt.h>
 
 #include "config.h"
 #include "data_structures.h"
@@ -299,16 +300,14 @@ bool benchmark_seed_line_with_round_robin_data() {
   const dim3 grid_size(num_blocks, 1, 1);
 
   // Warm up run (optional - helps with consistent timing)
-  seed_lines<<<grid_size, block_size>>>(device_data_ptr, desired_buckets);
-  CUDA_CHECK(cudaDeviceSynchronize());
-  CUDA_CHECK(cudaGetLastError());
 
-  // Set up shared memory 
+  seed_lines<<<grid_size, block_size>>>(device_data_ptr, desired_buckets);
+
+  // Set up shared memory
   // size_t shared_mem_size = block_x * sizeof(real_t
   fit_lines<<<num_blocks, block_size>>>(device_data_ptr, desired_buckets);
-  CUDA_CHECK(cudaDeviceSynchronize());
-  CUDA_CHECK(cudaGetLastError());
-
+  return true;
+  
   // Timed runs
   const int num_runs = 10; // Run multiple times for better statistics
   std::vector<float> kernel_times;

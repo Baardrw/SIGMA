@@ -9,6 +9,7 @@
 #define TILE_SIZE 16
 #define OVERFLOW_TILE_SIZE                                                     \
   32 // Amount of threads needed to handle overflowing buckets
+#define MAX_THREADS_PER_BLOCK 512
 
 typedef double real_t;
 

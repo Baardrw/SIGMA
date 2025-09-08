@@ -58,7 +58,7 @@ compute_mdt_residuals(line_t &line, const Vector3 &K, real_t drift_radius,
 }
 
 template <bool Overflow>
-__device__ __forceinline__ void
+__device__ void
 compute_rpc_residuals(line_t &line,
                       const measurement_cache_t<Overflow> &measurement_cache,
                       residual_cache_t<Overflow> &residual_cache) {
@@ -147,9 +147,9 @@ compute_residual(line_t &line, const int tid, const int num_mdt_measurements,
 
 // TODO: Remove unneccessary calculations from the cross product computation
 template <bool Overflow>
-__device__ __forceinline__ void compute_straw_residuals_and_derivatives(
+__device__ void compute_straw_residuals_and_derivatives(
     line_t &line, const measurement_cache_t<Overflow> &measurement_cache,
-    residual_cache_t<Overflow> &residual_cache) {
+    Vector3 &residual, Vector3 *delta_residual, Vector3 *dd_residual) {
   // Local vars
   const Vector3 &K = measurement_cache.connection_vector;
   const real_t drift_radius = measurement_cache.drift_radius;
@@ -157,20 +157,20 @@ __device__ __forceinline__ void compute_straw_residuals_and_derivatives(
 
   // ================ Residual ================
   real_t cross_product = K.cross(line.D_ortho)[0];
-  residual_cache.residual[BENDING] += abs(cross_product) - drift_radius;
+  residual[BENDING] += abs(cross_product) - drift_radius;
   real_t yz_residual_sign = (cross_product < 0.0f) ? -1.0f : 1.0f;
 
 // ================ Delta Residual ===============
 #pragma unroll
   for (int i = X0; i <= Y0; i++) {
     Vector3 delta_K = -line.dS0[i - X0];
-    residual_cache.delta_residual[i][BENDING] +=
+    delta_residual[i][BENDING] +=
         yz_residual_sign * delta_K.cross(line.D_ortho)[0];
   }
 
 #pragma unroll
   for (int i = THETA; i <= PHI; i++) {
-    residual_cache.delta_residual[i][BENDING] +=
+    delta_residual[i][BENDING] +=
         yz_residual_sign * K.cross(line.dD_ortho[i])[0];
   }
 
@@ -178,26 +178,14 @@ __device__ __forceinline__ void compute_straw_residuals_and_derivatives(
 #pragma unroll
   for (int i = DD_THETA_THETA; i <= DD_THETA_PHI; i++) {
     // Compute the delta delta residuals
-    residual_cache.dd_residual[i][BENDING] +=
-        yz_residual_sign * K.cross(line.ddD_ortho[i])[0];
+    dd_residual[i][BENDING] += yz_residual_sign * K.cross(line.ddD_ortho[i])[0];
   }
 }
 
 template <bool Overflow>
-__device__ __forceinline__ void compute_strip_residuals_and_derivatives(
+__device__ void compute_strip_residuals_and_derivatives(
     line_t &line, const measurement_cache_t<Overflow> &measurement_cache,
-    residual_cache_t<Overflow> &residual_cache) {
-  // References to store computed residuals in the correct cache
-  // to account for the data overflow. If there is an overflow one thread
-  // calculates both rpc and mdt, so it has to use another seperate cache
-  Vector3 *residual = &residual_cache.residual;
-  Vector3 *delta_residual = residual_cache.delta_residual;
-  Vector3 *dd_residual = residual_cache.dd_residual;
-  if constexpr (Overflow) {
-    residual = &residual_cache.rpc_residual;
-    delta_residual = residual_cache.rpc_delta_residual;
-    dd_residual = residual_cache.rpc_dd_residual;
-  }
+    Vector3 &residual, Vector3 *delta_residual, Vector3 *dd_residual) {
 
   // Local vars
   Vector3 P = measurement_cache.sensor_pos;
@@ -222,8 +210,8 @@ __device__ __forceinline__ void compute_strip_residuals_and_derivatives(
   real_t traveled_distance = (P.dot(N) - S0.dot(N)) * inverse_N_dot_D;
   Vector3 Sm = S0 + traveled_distance * D;
 
-  residual[0][BENDING] += (Sm - P).dot(v2);
-  residual[0][NON_BENDING] += (Sm - P).dot(v1);
+  residual[BENDING] += (Sm - P).dot(v2);
+  residual[NON_BENDING] += (Sm - P).dot(v1);
 
   // ================ Delta Residual ===============
 #pragma unroll
@@ -270,48 +258,48 @@ __device__ __forceinline__ void compute_strip_residuals_and_derivatives(
   }
 }
 
-template <bool Overflow>
-__device__ void
-update_residual_cache(line_t &line, const int tid,
-                      const int num_mdt_measurements,
-                      const int num_rpc_measurements,
-                      const measurement_cache_t<Overflow> &measurement_cache,
-                      residual_cache_t<Overflow> &residual_cache) {
+// template <bool Overflow>
+// __device__ void
+// update_residual_cache(line_t &line, const int tid,
+//                       const int num_mdt_measurements,
+//                       const int num_rpc_measurements,
+//                       const measurement_cache_t<Overflow> &measurement_cache,
+//                       residual_cache_t<Overflow> &residual_cache) {
 
-// Zero out the residual cache
-#pragma unroll
-  for (int i = 0; i < 3; i++) {
-    residual_cache.residual[i] = 0.0f;
-    residual_cache.dd_residual[i] = Vector3(0.0f, 0.0f, 0.0f);
+// // Zero out the residual cache
+// #pragma unroll
+//   for (int i = 0; i < 3; i++) {
+//     residual_cache.residual[i] = 0.0f;
+//     residual_cache.dd_residual[i] = Vector3(0.0f, 0.0f, 0.0f);
 
-    if constexpr (Overflow) {
-      residual_cache.rpc_residual[i] = 0.0f;
-      residual_cache.rpc_dd_residual[i] = Vector3(0.0f, 0.0f, 0.0f);
-    }
-  }
+//     if constexpr (Overflow) {
+//       residual_cache.rpc_residual[i] = 0.0f;
+//       residual_cache.rpc_dd_residual[i] = Vector3(0.0f, 0.0f, 0.0f);
+//     }
+//   }
 
-#pragma unroll
-  for (int i = 0; i < 4; i++) {
-    residual_cache.delta_residual[i] = Vector3(0.0f, 0.0f, 0.0f);
+// #pragma unroll
+//   for (int i = 0; i < 4; i++) {
+//     residual_cache.delta_residual[i] = Vector3(0.0f, 0.0f, 0.0f);
 
-    if constexpr (Overflow) {
-      residual_cache.rpc_delta_residual[i] = Vector3(0.0f, 0.0f, 0.0f);
-    }
-  }
+//     if constexpr (Overflow) {
+//       residual_cache.rpc_delta_residual[i] = Vector3(0.0f, 0.0f, 0.0f);
+//     }
+//   }
 
-  if (tid < num_mdt_measurements) {
-    compute_straw_residuals_and_derivatives(line, measurement_cache,
-                                            residual_cache);
-  }
+//   if (tid < num_mdt_measurements) {
+//     compute_straw_residuals_and_derivatives(line, measurement_cache,
+//                                             residual_cache);
+//   }
 
-  if (should_compute_rpc<Overflow>(tid, num_mdt_measurements,
-                                   num_rpc_measurements)) {
-    compute_strip_residuals_and_derivatives(line, measurement_cache,
-                                            residual_cache);
-  }
-}
+//   if (should_compute_rpc<Overflow>(tid, num_mdt_measurements,
+//                                    num_rpc_measurements)) {
+//     compute_strip_residuals_and_derivatives(line, measurement_cache,
+//                                             residual_cache);
+//   }
+// }
 
-__device__ __forceinline__ real_t
+__device__ real_t
 contract(const Vector3 &v1, const Vector3 &v2,
          const Vector3 &inverse_sigma_squared) {
   real_t result = 0.0f;
@@ -400,8 +388,8 @@ __device__ Vector4 get_gradient(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
   return gradient;
 }
 
-__device__  __forceinline__ Vector3 get_delta_delta_residual(int param1_idx, int param2_idx,
-                                            Vector3 *dd_residual) {
+__device__ Vector3
+get_delta_delta_residual(int param1_idx, int param2_idx, Vector3 *dd_residual) {
   if (param1_idx == Y0 || param2_idx == Y0 || param1_idx == X0 ||
       param2_idx == X0) {
     return Vector3(0.0f, 0.0f, 0.0f); // No delta delta residual for Y0 or X0
@@ -414,49 +402,121 @@ __device__  __forceinline__ Vector3 get_delta_delta_residual(int param1_idx, int
   }
 }
 
-template <bool Overflow>
-__device__ Matrix4 get_hessian(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
-                               int num_measurements,
-                               residual_cache_t<Overflow> &residual_cache) {
-  Matrix4 hessian = Matrix4::Zero();
-
+__device__ __forceinline__ void
+accumulate_hessian(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
+                   Vector3 &inverse_sigma_squared, Vector3 &residual,
+                   Vector3 *delta_residual, Vector3 *dd_residual,
+                   Matrix4 &hessian) {
 #pragma unroll
   for (int i = 0; i < 4; i++) {
 #pragma unroll
     for (int j = 0; j < 4; j++) {
       if (j >= i) {
-        hessian(i, j) = 2 * (contract(residual_cache.delta_residual[i],
-                                      residual_cache.delta_residual[j],
-                                      residual_cache.inverse_sigma_squared) +
-                             contract(get_delta_delta_residual(
-                                          i, j, residual_cache.dd_residual),
-                                      residual_cache.residual,
-                                      residual_cache.inverse_sigma_squared));
-
-        if constexpr (Overflow) {
-          hessian(i, j) +=
-              2 * (contract(residual_cache.rpc_delta_residual[i],
-                            residual_cache.rpc_delta_residual[j],
-                            residual_cache.rpc_inverse_sigma_squared) +
-                   contract(get_delta_delta_residual(
-                                i, j, residual_cache.rpc_dd_residual),
-                            residual_cache.rpc_residual,
-                            residual_cache.rpc_inverse_sigma_squared));
-        }
-
-        hessian(j, i) = hessian(i, j); // Symmetric matrix
+        hessian(i, j) +=
+            2 * (contract(delta_residual[i], delta_residual[j],
+                          inverse_sigma_squared) +
+                 contract(get_delta_delta_residual(i, j, dd_residual), residual,
+                          inverse_sigma_squared));
       }
     }
   }
+}
 
-  // Reduce hessian across the threads in the bucket_tile
+template <bool Overflow>
+__device__ void compute_gradient_hessian(
+    cg::thread_block_tile<TILE_SIZE> &bucket_tile, int num_mdt_measurements,
+    int num_rpc_measurements, line_t &line,
+    const measurement_cache_t<Overflow> &measurement_cache,
+    Vector3 inverse_sigma_squared[2], Vector4 &gradient, Matrix4 &hessian) {
+
+  // clang-format off
+    Vector3 residual = Vector3(0.0f, 0.0f, 0.0f);
+    Vector3 delta_residual[4] = {Vector3(0.0f, 0.0f, 0.0f),
+                                 Vector3(0.0f, 0.0f, 0.0f),
+                                 Vector3(0.0f, 0.0f, 0.0f),
+                                 Vector3(0.0f, 0.0f, 0.0f)};
+    Vector3 dd_residual[3] = {Vector3(0.0f, 0.0f, 0.0f),
+                                 Vector3(0.0f, 0.0f, 0.0f),
+                                 Vector3(0.0f, 0.0f, 0.0f)};
+  // clang-format on
+
+  {
+    // =============== Compute all Straw Residuals First ================
+
+    if (bucket_tile.thread_rank() < num_mdt_measurements) {
+      compute_straw_residuals_and_derivatives(line, measurement_cache, residual,
+                                              delta_residual, dd_residual);
+    }
+
+    // ================ Accumulate Straw Residual into Gradient ================
+#pragma unroll
+    for (int i = THETA; i <= Y0; i++) {
+      // Accumulate Straw residuals into thread local gradient
+      gradient[i] +=
+          2 * contract(residual, delta_residual[i], inverse_sigma_squared[0]);
+    }
+
+    // ================ Accumulate Straw Residual into Hessian ===============
+    accumulate_hessian(bucket_tile, inverse_sigma_squared[0], residual,
+                       delta_residual, dd_residual, hessian);
+  }
+
+  // =============== Compute all Strip Residuals ================
+  {
+    // Zero out residuals and derivatives
+    residual = Vector3(0.0f, 0.0f, 0.0f);
+#pragma unroll
+    for (int i = 0; i < 4; i++) {
+      delta_residual[i] = Vector3(0.0f, 0.0f, 0.0f);
+    }
+#pragma unroll
+    for (int i = 0; i < 3; i++) {
+      dd_residual[i] = Vector3(0.0f, 0.0f, 0.0f);
+    }
+
+    if constexpr (Overflow) {
+      if (bucket_tile.thread_rank() < num_rpc_measurements) {
+        compute_strip_residuals_and_derivatives(
+            line, measurement_cache, residual, delta_residual, dd_residual);
+      }
+    } else {
+      if (bucket_tile.thread_rank() >= num_mdt_measurements &&
+          bucket_tile.thread_rank() <
+              num_mdt_measurements + num_rpc_measurements) {
+        compute_strip_residuals_and_derivatives(
+            line, measurement_cache, residual, delta_residual, dd_residual);
+      }
+    }
+
+    // ================ Accumulate Strip Residual into Gradient ================
+#pragma unroll
+    for (int i = THETA; i <= Y0; i++) {
+      gradient[i] +=
+          2 * contract(residual, delta_residual[i], inverse_sigma_squared[1]);
+    }
+    // ================ Accumulate Strip Residual into Hessian ================
+
+    accumulate_hessian(bucket_tile, inverse_sigma_squared[1], residual,
+                       delta_residual, dd_residual, hessian);
+  }
+
+// ================ Reduce Gradient into Thread 0 ================
+#pragma unroll
+  for (int j = 0; j < 4; j++) {
+    for (int i = bucket_tile.num_threads() / 2; i >= 1; i /= 2) {
+      bucket_tile.sync();
+      gradient[j] += bucket_tile.shfl_down(gradient[j], i);
+    }
+  }
+
+  // ================ Reduce Hessian into Thread 0 ================
   for (int i = bucket_tile.num_threads() / 2; i >= 1; i /= 2) {
     bucket_tile.sync();
 #pragma unroll
     for (int j = 0; j < 4; j++) {
 #pragma unroll
       for (int k = 0; k < 4; k++) {
-        if (j >= k) {
+        if (k >= j) {
           hessian(j, k) += bucket_tile.shfl_down(hessian(j, k), i);
           hessian(k, j) = hessian(j, k); // Ensure symmetry
         }
@@ -464,7 +524,7 @@ __device__ Matrix4 get_hessian(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
     }
   }
 
-  // Broadcast the hessian to all threads:
+  // ================ Broadcast Hessian to all threads ================
 #pragma unroll
   for (int i = 0; i < 4; i++) {
 #pragma unroll
@@ -473,23 +533,34 @@ __device__ Matrix4 get_hessian(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
       hessian(i, j) = bucket_tile.shfl(hessian(i, j), 0);
     }
   }
-
-  return hessian;
 }
 
 // update_residual_cache instantiations
-template __device__ void
-update_residual_cache<true>(line_t &line, const int tid,
-                            const int num_mdt_measurements,
-                            const int num_rpc_measurements,
-                            const measurement_cache_t<true> &measurement_cache,
-                            residual_cache_t<true> &residual_cache);
+// template __device__ void
+// update_residual_cache<true>(line_t &line, const int tid,
+//                             const int num_mdt_measurements,
+//                             const int num_rpc_measurements,
+//                             const measurement_cache_t<true>
+//                             &measurement_cache, residual_cache_t<true>
+//                             &residual_cache);
 
-template __device__ void update_residual_cache<false>(
-    line_t &line, const int tid, const int num_mdt_measurements,
-    const int num_rpc_measurements,
+// template __device__ void update_residual_cache<false>(
+//     line_t &line, const int tid, const int num_mdt_measurements,
+//     const int num_rpc_measurements,
+//     const measurement_cache_t<false> &measurement_cache,
+//     residual_cache_t<false> &residual_cache);
+
+template __device__ void compute_gradient_hessian<true>(
+    cg::thread_block_tile<TILE_SIZE> &bucket_tile, int num_mdt_measurements,
+    int num_rpc_measurements, line_t &line,
+    const measurement_cache_t<true> &measurement_cache,
+    Vector3 inverse_sigma_squared[2], Vector4 &gradient, Matrix4 &hessian);
+
+template __device__ void compute_gradient_hessian<false>(
+    cg::thread_block_tile<TILE_SIZE> &bucket_tile, int num_mdt_measurements,
+    int num_rpc_measurements, line_t &line,
     const measurement_cache_t<false> &measurement_cache,
-    residual_cache_t<false> &residual_cache);
+    Vector3 inverse_sigma_squared[2], Vector4 &gradient, Matrix4 &hessian);
 
 // compute_residual instantiations
 template __device__ void
@@ -525,12 +596,13 @@ template __device__ Vector4 get_gradient<false>(
     residual_cache_t<false> &residual_cache);
 
 // get_hessian instantiations
-template __device__ Matrix4
-get_hessian<true>(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
-                  int num_measurements, residual_cache_t<true> &residual_cache);
+// template __device__ Matrix4
+// get_hessian<true>(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
+//                   int num_measurements, residual_cache_t<true>
+//                   &residual_cache);
 
-template __device__ Matrix4 get_hessian<false>(
-    cg::thread_block_tile<TILE_SIZE> &bucket_tile, int num_measurements,
-    residual_cache_t<false> &residual_cache);
+// template __device__ Matrix4 get_hessian<false>(
+//     cg::thread_block_tile<TILE_SIZE> &bucket_tile, int num_measurements,
+//     residual_cache_t<false> &residual_cache);
 
 } // namespace residualMath

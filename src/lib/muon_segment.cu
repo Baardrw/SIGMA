@@ -11,6 +11,7 @@
 // #define VERBOSE 1
 // #define DEBUG 1
 
+
 using namespace cooperative_groups;
 namespace cg = cooperative_groups;
 
@@ -27,8 +28,8 @@ __constant__ real_t rho_1_comb[4] = {1, 1, -1, -1};
 // Utility Functions
 // ============================================================================
 
-__host__ __device__ __forceinline__ void
-estimate_phi(struct Data *data, int rpc_start, int bucket_end, real_t &phi) {
+__host__ __device__ void estimate_phi(struct Data *data, int rpc_start,
+                                      int bucket_end, real_t &phi) {
   // Get RPC positions
   real_t rpc_0_x = data->sensor_pos_x[rpc_start];
   real_t rpc_0_y = data->sensor_pos_y[rpc_start];
@@ -54,10 +55,10 @@ __device__ inline void estimate_theta(real_t T12_y, real_t T12_z, real_t rho_0,
   }
 }
 
-__device__ __forceinline__ void
-initialize_bucket_indexing(struct Data *data, int bucket_index,
-                           int &bucket_start, int &rpc_start, int &bucket_end,
-                           int &thread_data_index) {
+__device__ void initialize_bucket_indexing(struct Data *data, int bucket_index,
+                                           int &bucket_start, int &rpc_start,
+                                           int &bucket_end,
+                                           int &thread_data_index) {
 
   // Debug prints BEFORE accessing memory
 
@@ -76,7 +77,7 @@ initialize_bucket_indexing(struct Data *data, int bucket_index,
 // ============================================================================
 
 template <bool Overflow>
-__device__ __forceinline__ void
+__device__ void
 load_measurement_cache(struct Data *data, const int thread_data_index,
                        real_t x0, real_t y0, const int num_mdt_measurements,
                        measurement_cache_t<Overflow> &measurement_cache) {
@@ -101,8 +102,8 @@ load_measurement_cache(struct Data *data, const int thread_data_index,
   }
 }
 
-__device__ __forceinline__ Vector3
-get_inverse_sigma_squared(const int index, struct Data *data) {
+__device__ Vector3 get_inverse_sigma_squared(const int index,
+                                             struct Data *data) {
   Vector3 sigma = SIGMA(data, index);
   Vector3 sigma_squared = matrixMath::elementwise_mult(sigma, sigma);
 #pragma unroll
@@ -115,10 +116,10 @@ get_inverse_sigma_squared(const int index, struct Data *data) {
 }
 
 template <bool Overflow>
-__device__ __forceinline__ void
-seed_line_impl(struct Data *data, const int thread_data_index, int bucket_index,
-               int bucket_start, int rpc_start, int bucket_end,
-               cg::thread_block_tile<TILE_SIZE> &bucket_tile) {
+__device__ void seed_line_impl(struct Data *data, const int thread_data_index,
+                               int bucket_index, int bucket_start,
+                               int rpc_start, int bucket_end,
+                               cg::thread_block_tile<TILE_SIZE> &bucket_tile) {
   real_t phi = 0.0f;
   real_t theta[4], x0[4], y0[4];
 
@@ -235,10 +236,10 @@ seed_line_impl(struct Data *data, const int thread_data_index, int bucket_index,
 }
 
 template <bool Overflow>
-__device__ __forceinline__ void
-fit_line_impl(struct Data *data, const int thread_data_index, int bucket_index,
-              int bucket_start, int rpc_start, int bucket_end,
-              cg::thread_block_tile<TILE_SIZE> &bucket_tile) {
+__device__ void fit_line_impl(struct Data *data, const int thread_data_index,
+                              int bucket_index, int bucket_start, int rpc_start,
+                              int bucket_end,
+                              cg::thread_block_tile<TILE_SIZE> &bucket_tile) {
 
   // Initialize from seed parameters
   Vector4 params = {data->theta[bucket_index], data->phi[bucket_index],
@@ -246,7 +247,6 @@ fit_line_impl(struct Data *data, const int thread_data_index, int bucket_index,
 
   const int num_mdt_measurements = rpc_start - bucket_start;
   const int num_rpc_measurements = bucket_end - rpc_start;
-  const int num_measurements = num_mdt_measurements + num_rpc_measurements;
 
   // Construct measurement cache
   measurement_cache_t<Overflow> measurement_cache;
@@ -256,18 +256,20 @@ fit_line_impl(struct Data *data, const int thread_data_index, int bucket_index,
 
   // Newton-Raphson iteration
   int iteration = 0;
-  bool error_flag = false; // Used to indicate an error to all other threads in
-                           // case thread 0 has encountered an error
 
-  residual_cache_t<Overflow> residual_cache;
-  residual_cache.inverse_sigma_squared =
-      get_inverse_sigma_squared(thread_data_index, data);
+  Vector3 inverse_sigma_squared[2];
+  inverse_sigma_squared[0] = get_inverse_sigma_squared(thread_data_index, data);
 
   if constexpr (Overflow) {
     if (bucket_tile.thread_rank() < num_rpc_measurements) {
-      residual_cache.rpc_inverse_sigma_squared = get_inverse_sigma_squared(
+      inverse_sigma_squared[1] = get_inverse_sigma_squared(
           rpc_start + bucket_tile.thread_rank(), data);
     }
+  } else {
+    inverse_sigma_squared[1] =
+        inverse_sigma_squared[0]; // When there isnt an overflow the inverse
+                                  // sigma loaded for the value is the inverse
+                                  // sigma for the strip
   }
 
   for (iteration = 0; iteration < 1000; iteration++) {
@@ -280,37 +282,31 @@ fit_line_impl(struct Data *data, const int thread_data_index, int bucket_index,
     measurement_cache.connection_vector =
         measurement_cache.sensor_pos - line.S0;
 
-    residualMath::update_residual_cache<Overflow>(
-        line, bucket_tile.thread_rank(), num_mdt_measurements,
-        num_rpc_measurements, measurement_cache, residual_cache);
+    Vector4 gradient = Vector4(0.0f, 0.0f, 0.0f, 0.0f);
+    Matrix4 hessian = Matrix4::Zero();
+    residualMath::compute_gradient_hessian<Overflow>(
+        bucket_tile, num_mdt_measurements, num_rpc_measurements, line,
+        measurement_cache, inverse_sigma_squared, gradient, hessian);
 
-    // Get gradient and hessian
-    Vector4 gradient = residualMath::get_gradient<Overflow>(
-        bucket_tile, num_measurements, residual_cache);
-
-    Matrix4 hessian = residualMath::get_hessian<Overflow>(
-        bucket_tile, num_measurements, residual_cache);
-
-    Matrix4 inverse_hessian;
-    if (!matrixMath::invert_4x4(bucket_tile, hessian, inverse_hessian)) {
+    // Hessian becomes inverted in place to save registers
+    if (!matrixMath::invert_4x4(bucket_tile, hessian)) {
       if (bucket_tile.thread_rank() == 16) {
         printf("Singular hessian at iteration %d\n", iteration);
         printf("Bucket index: %d\n", bucket_index);
       }
-      error_flag = true; // Set error flag to indicate failure
+      iteration = -1; // Mark error
     }
 
     // Broadcast error flag
     bucket_tile.sync();
-    error_flag = bucket_tile.shfl(error_flag, 0);
-    if (error_flag) {
+    iteration = bucket_tile.shfl(iteration, 0);
+    if (iteration == -1) {
       break; // Exit loop on error and dont update parameters
     }
 
     real_t delta_params_norm; // To check for early stopping
     if (bucket_tile.thread_rank() == 0) {
-
-      Vector4 delta_params = -inverse_hessian * gradient;
+      Vector4 delta_params = -hessian * gradient;
       delta_params_norm = delta_params.norm();
       params += delta_params;
     }
@@ -357,10 +353,10 @@ fit_line_impl(struct Data *data, const int thread_data_index, int bucket_index,
 // ============================================================================
 
 template <bool Overflow>
-__device__ __forceinline__ void
-execute_work(WorkType work_type, Data *data, const int thread_data_index,
-             int bucket_index, int bucket_start, int rpc_start, int bucket_end,
-             cg::thread_block_tile<TILE_SIZE> &bucket_tile) {
+__device__ void execute_work(WorkType work_type, Data *data,
+                             const int thread_data_index, int bucket_index,
+                             int bucket_start, int rpc_start, int bucket_end,
+                             cg::thread_block_tile<TILE_SIZE> &bucket_tile) {
 
   switch (work_type) {
   case WorkType::SEED_LINE:
@@ -381,9 +377,8 @@ execute_work(WorkType work_type, Data *data, const int thread_data_index,
 // Main Work Partitioning Function
 // ============================================================================
 
-__device__ __forceinline__ void partition_and_execute_work(struct Data *data,
-                                                           int num_buckets,
-                                                           WorkType work_type) {
+__device__ void partition_and_execute_work(struct Data *data, int num_buckets,
+                                           WorkType work_type) {
   const unsigned int global_thread_id = blockIdx.x * blockDim.x + threadIdx.x;
   const int primary_bucket = global_thread_id / TILE_SIZE;
   const int secondary_bucket =

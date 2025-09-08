@@ -24,11 +24,11 @@ compute_residuals(line_t &line, measurement_cache_t<false> *measurement_cache,
  * is called to ensure that line.D_ortho is up to date.
  */
 template <bool Overflow>
-__device__ void compute_residual(line_t &line, const int tid,
-                                 const int num_mdt_measurements,
-                                 const int num_rpc_measurements,
-                                 const measurement_cache_t<Overflow> &measurement_cache,
-                                 residual_cache_t<Overflow> &residual_cache);
+__device__ void
+compute_residual(line_t &line, const int tid, const int num_mdt_measurements,
+                 const int num_rpc_measurements,
+                 const measurement_cache_t<Overflow> &measurement_cache,
+                 residual_cache_t<Overflow> &residual_cache);
 
 /**
  * More optimized version of computing all the residuals in different functions,
@@ -62,10 +62,18 @@ __device__ Vector4 get_gradient(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
  *
  * The hessian is broadcast to all threads in the bucket_tile.
  */
+// template <bool Overflow>
+// __device__ Matrix4 get_hessian(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
+//                                int num_measurements,
+//                                residual_cache_t<Overflow> &residual_cache);
+
 template <bool Overflow>
-__device__ Matrix4 get_hessian(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
-                               int num_measurements,
-                               residual_cache_t<Overflow> &residual_cache);
+__device__ void compute_gradient_hessian(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
+                         int num_mdt_measurements, int num_rpc_measurements,
+                         line_t &line,
+                         const measurement_cache_t<Overflow> &measurement_cache,
+                         Vector3 inverse_sigma_squared[2],
+                         Vector4 &gradient, Matrix4 &hessian);
 
 __host__ real_t get_chi2(const std::vector<Vector3> &residuals,
                          const std::vector<Vector3> &inverse_sigma_squared);

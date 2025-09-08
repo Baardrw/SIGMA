@@ -19,7 +19,7 @@ __device__ bool invert_2x2(const Matrix2 &input, Matrix2 &output) {
 
 __device__ __forceinline__ bool
 adjugate_inversion(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
-                   const Matrix4 &input_matrix, Matrix4 &inv_out) {
+                   Matrix4 &input_matrix) {
   // Initialize variables for ALL threads (prevents garbage in shuffles)
   real_t cofactor = 0.0f;
   real_t inv_element = 0.0f;
@@ -76,7 +76,7 @@ adjugate_inversion(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
   for (int i = 0; i < 16; ++i) {
     real_t shfl = bucket_tile.shfl(inv_element, i); // ALL participate
     if (bucket_tile.thread_rank() == 0) {
-      inv_out(i / 4, i % 4) = shfl;
+      input_matrix(i / 4, i % 4) = shfl;
     }
   }
 
@@ -87,11 +87,10 @@ adjugate_inversion(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
 }
 
 __device__ bool invert_4x4(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
-                           Matrix4 &input, Matrix4 &output) {
+                           Matrix4 &matrix) {
 
-  input += Matrix4::Identity() * 1e-6;
-  bool status = adjugate_inversion(bucket_tile, input, output);
-  bucket_tile.sync();
+  matrix += Matrix4::Identity() * 1e-6;
+  bool status = adjugate_inversion(bucket_tile, matrix);
 
   return status;
 }
@@ -115,7 +114,7 @@ __global__ void test_invert_4x4(Matrix4 *input_matrices,
   Matrix4 output;
 
   // Call your invert function
-  bool success = invert_4x4(bucket_tile, input, output);
+  bool success = invert_4x4(bucket_tile, input);
 
   // Store results (only one thread per block needs to write)
   if (bucket_tile.thread_rank() == 0) {
