@@ -50,7 +50,7 @@ compute_residuals(line_t &line, measurement_cache_t<false> *measurement_cache,
 }
 
 template <bool Overflow>
-__device__ __forceinline__ void
+__device__ void
 compute_mdt_residuals(line_t &line, const Vector3 &K, real_t drift_radius,
                       residual_cache_t<Overflow> &residual_cache) {
   real_t cross_product = K.cross(line.D_ortho)[0];
@@ -58,7 +58,7 @@ compute_mdt_residuals(line_t &line, const Vector3 &K, real_t drift_radius,
 }
 
 template <bool Overflow>
-__device__ __forceinline__ void
+__device__ void
 compute_rpc_residuals(line_t &line,
                       const measurement_cache_t<Overflow> &measurement_cache,
                       residual_cache_t<Overflow> &residual_cache) {
@@ -100,9 +100,9 @@ compute_rpc_residuals(line_t &line,
 }
 
 template <bool Overflow>
-__device__ __forceinline__ bool
-should_compute_rpc(const int tid, const int num_mdt_measurements,
-                   const int num_rpc_measurements) {
+__device__ bool should_compute_rpc(const int tid,
+                                   const int num_mdt_measurements,
+                                   const int num_rpc_measurements) {
   if constexpr (Overflow) {
     // In overflow mode: first num_rpc_measurements threads compute RPC as well
     // as MDT
@@ -147,13 +147,12 @@ compute_residual(line_t &line, const int tid, const int num_mdt_measurements,
 
 // TODO: Remove unneccessary calculations from the cross product computation
 template <bool Overflow>
-__device__ __forceinline__ void compute_straw_residuals_and_derivatives(
+__device__ void compute_straw_residuals_and_derivatives(
     line_t &line, const measurement_cache_t<Overflow> &measurement_cache,
     residual_cache_t<Overflow> &residual_cache) {
   // Local vars
   const Vector3 &K = measurement_cache.connection_vector;
   const real_t drift_radius = measurement_cache.drift_radius;
-  const Vector3 &W = MDT_DIR;
 
   // ================ Residual ================
   real_t cross_product = K.cross(line.D_ortho)[0];
@@ -184,7 +183,7 @@ __device__ __forceinline__ void compute_straw_residuals_and_derivatives(
 }
 
 template <bool Overflow>
-__device__ __forceinline__ void compute_strip_residuals_and_derivatives(
+__device__ void compute_strip_residuals_and_derivatives(
     line_t &line, const measurement_cache_t<Overflow> &measurement_cache,
     residual_cache_t<Overflow> &residual_cache) {
   // References to store computed residuals in the correct cache
@@ -311,9 +310,8 @@ update_residual_cache(line_t &line, const int tid,
   }
 }
 
-__device__ __forceinline__ real_t
-contract(const Vector3 &v1, const Vector3 &v2,
-         const Vector3 &inverse_sigma_squared) {
+__device__ real_t contract(const Vector3 &v1, const Vector3 &v2,
+                           const Vector3 &inverse_sigma_squared) {
   real_t result = 0.0f;
 
 #pragma unroll
@@ -400,7 +398,7 @@ __device__ Vector4 get_gradient(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
   return gradient;
 }
 
-__device__  __forceinline__ Vector3 get_delta_delta_residual(int param1_idx, int param2_idx,
+__device__ Vector3 get_delta_delta_residual(int param1_idx, int param2_idx,
                                             Vector3 *dd_residual) {
   if (param1_idx == Y0 || param2_idx == Y0 || param1_idx == X0 ||
       param2_idx == X0) {
@@ -421,30 +419,29 @@ __device__ Matrix4 get_hessian(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
   Matrix4 hessian = Matrix4::Zero();
 
 #pragma unroll
-  for (int i = 0; i < 4; i++) {
+  for (int col = 0; col < 4; col++) {
 #pragma unroll
-    for (int j = 0; j < 4; j++) {
-      if (j >= i) {
-        hessian(i, j) = 2 * (contract(residual_cache.delta_residual[i],
-                                      residual_cache.delta_residual[j],
-                                      residual_cache.inverse_sigma_squared) +
-                             contract(get_delta_delta_residual(
-                                          i, j, residual_cache.dd_residual),
-                                      residual_cache.residual,
-                                      residual_cache.inverse_sigma_squared));
+    for (int row = 0; row < 4; row++) {
+      if (row >= col) { // Lower triangular
+        hessian(row, col) +=
+            2 * (contract(residual_cache.delta_residual[row],
+                          residual_cache.delta_residual[col],
+                          residual_cache.inverse_sigma_squared) +
+                 contract(get_delta_delta_residual(row, col,
+                                                   residual_cache.dd_residual),
+                          residual_cache.residual,
+                          residual_cache.inverse_sigma_squared));
 
         if constexpr (Overflow) {
-          hessian(i, j) +=
-              2 * (contract(residual_cache.rpc_delta_residual[i],
-                            residual_cache.rpc_delta_residual[j],
+          hessian(row, col) +=
+              2 * (contract(residual_cache.rpc_delta_residual[row],
+                            residual_cache.rpc_delta_residual[col],
                             residual_cache.rpc_inverse_sigma_squared) +
                    contract(get_delta_delta_residual(
-                                i, j, residual_cache.rpc_dd_residual),
+                                row, col, residual_cache.rpc_dd_residual),
                             residual_cache.rpc_residual,
                             residual_cache.rpc_inverse_sigma_squared));
         }
-
-        hessian(j, i) = hessian(i, j); // Symmetric matrix
       }
     }
   }
@@ -453,12 +450,11 @@ __device__ Matrix4 get_hessian(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
   for (int i = bucket_tile.num_threads() / 2; i >= 1; i /= 2) {
     bucket_tile.sync();
 #pragma unroll
-    for (int j = 0; j < 4; j++) {
+    for (int col = 0; col < 4; col++) {
 #pragma unroll
-      for (int k = 0; k < 4; k++) {
-        if (j >= k) {
-          hessian(j, k) += bucket_tile.shfl_down(hessian(j, k), i);
-          hessian(k, j) = hessian(j, k); // Ensure symmetry
+      for (int row = 0; row < 4; row++) {
+        if (row >= col) { // Lower triangular
+          hessian(row, col) += bucket_tile.shfl_down(hessian(row, col), i);
         }
       }
     }
@@ -466,11 +462,12 @@ __device__ Matrix4 get_hessian(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
 
   // Broadcast the hessian to all threads:
 #pragma unroll
-  for (int i = 0; i < 4; i++) {
+  for (int col = 0; col < 4; col++) {
 #pragma unroll
-    for (int j = 0; j < 4; j++) {
+    for (int row = 0; row < 4; row++) {
       bucket_tile.sync();
-      hessian(i, j) = bucket_tile.shfl(hessian(i, j), 0);
+      hessian(row, col) = bucket_tile.shfl(hessian(row, col), 0);
+      hessian(col, row) = hessian(row, col); // Ensure symmetry
     }
   }
 

@@ -16,8 +16,9 @@ __device__ inline Vector3 elementwise_mult(const Vector3 &v1,
 
 __device__ bool invert_2x2(const Matrix2 &input, Matrix2 &output);
 
+// Does an in place inversion of a 4x4 matrix using all threads in the CG
 __device__ bool invert_4x4(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
-                           Matrix4 &input, Matrix4 &output);
+                           Matrix4 &input_ouput);
 
 __global__ void test_invert_4x4(Matrix4 *input_matrices,
                                 Matrix4 *output_matrices, int *results,

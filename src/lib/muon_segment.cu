@@ -11,6 +11,8 @@
 // #define VERBOSE 1
 // #define DEBUG 1
 
+#define NEWTON_RAPHSON_MAX_ITER 20
+
 using namespace cooperative_groups;
 namespace cg = cooperative_groups;
 
@@ -27,8 +29,8 @@ __constant__ real_t rho_1_comb[4] = {1, 1, -1, -1};
 // Utility Functions
 // ============================================================================
 
-__host__ __device__ __forceinline__ void
-estimate_phi(struct Data *data, int rpc_start, int bucket_end, real_t &phi) {
+__host__ __device__ void estimate_phi(struct Data *data, int rpc_start,
+                                      int bucket_end, real_t &phi) {
   // Get RPC positions
   real_t rpc_0_x = data->sensor_pos_x[rpc_start];
   real_t rpc_0_y = data->sensor_pos_y[rpc_start];
@@ -54,13 +56,10 @@ __device__ inline void estimate_theta(real_t T12_y, real_t T12_z, real_t rho_0,
   }
 }
 
-__device__ __forceinline__ void
-initialize_bucket_indexing(struct Data *data, int bucket_index,
-                           int &bucket_start, int &rpc_start, int &bucket_end,
-                           int &thread_data_index) {
-
-  // Debug prints BEFORE accessing memory
-
+__device__ void initialize_bucket_indexing(struct Data *data, int bucket_index,
+                                           int &bucket_start, int &rpc_start,
+                                           int &bucket_end,
+                                           int &thread_data_index) {
   bucket_start = data->buckets[bucket_index * 3];
   rpc_start = data->buckets[bucket_index * 3 + 1];
   bucket_end = data->buckets[bucket_index * 3 + 2];
@@ -76,19 +75,17 @@ initialize_bucket_indexing(struct Data *data, int bucket_index,
 // ============================================================================
 
 template <bool Overflow>
-__device__ __forceinline__ void
+__device__ void
 load_measurement_cache(struct Data *data, const int thread_data_index,
                        real_t x0, real_t y0, const int num_mdt_measurements,
                        measurement_cache_t<Overflow> &measurement_cache) {
   // clang-format off
     // Get sensor position
-    Vector3 sensor_pos = SENSOR_POS(data, thread_data_index);
-
     // Initialize measurement cache
-    measurement_cache.connection_vector = sensor_pos - Vector3(x0, y0, 0.0f);
+    measurement_cache.sensor_pos        = SENSOR_POS(data, thread_data_index);
+    measurement_cache.connection_vector = measurement_cache.sensor_pos - Vector3(x0, y0, 0.0f);
     measurement_cache.drift_radius      = DRIFT_RADIUS(data, thread_data_index);
     measurement_cache.sensor_direction  = SENSOR_DIRECTION(data, thread_data_index);
-    measurement_cache.sensor_pos        = sensor_pos;
     measurement_cache.plane_normal      = PLANE_NORMAL(data, thread_data_index);
   // clang-format on
 
@@ -101,8 +98,8 @@ load_measurement_cache(struct Data *data, const int thread_data_index,
   }
 }
 
-__device__ __forceinline__ Vector3
-get_inverse_sigma_squared(const int index, struct Data *data) {
+__device__ Vector3 get_inverse_sigma_squared(const int index,
+                                             struct Data *data) {
   Vector3 sigma = SIGMA(data, index);
   Vector3 sigma_squared = matrixMath::elementwise_mult(sigma, sigma);
 #pragma unroll
@@ -115,10 +112,10 @@ get_inverse_sigma_squared(const int index, struct Data *data) {
 }
 
 template <bool Overflow>
-__device__ __forceinline__ void
-seed_line_impl(struct Data *data, const int thread_data_index, int bucket_index,
-               int bucket_start, int rpc_start, int bucket_end,
-               cg::thread_block_tile<TILE_SIZE> &bucket_tile) {
+__device__ void seed_line_impl(struct Data *data, const int thread_data_index,
+                               int bucket_index, int bucket_start,
+                               int rpc_start, int bucket_end,
+                               cg::thread_block_tile<TILE_SIZE> &bucket_tile) {
   real_t phi = 0.0f;
   real_t theta[4], x0[4], y0[4];
 
@@ -235,10 +232,10 @@ seed_line_impl(struct Data *data, const int thread_data_index, int bucket_index,
 }
 
 template <bool Overflow>
-__device__ __forceinline__ void
-fit_line_impl(struct Data *data, const int thread_data_index, int bucket_index,
-              int bucket_start, int rpc_start, int bucket_end,
-              cg::thread_block_tile<TILE_SIZE> &bucket_tile) {
+__device__ void fit_line_impl(struct Data *data, const int thread_data_index,
+                              int bucket_index, int bucket_start, int rpc_start,
+                              int bucket_end,
+                              cg::thread_block_tile<TILE_SIZE> &bucket_tile) {
 
   // Initialize from seed parameters
   Vector4 params = {data->theta[bucket_index], data->phi[bucket_index],
@@ -256,8 +253,6 @@ fit_line_impl(struct Data *data, const int thread_data_index, int bucket_index,
 
   // Newton-Raphson iteration
   int iteration = 0;
-  bool error_flag = false; // Used to indicate an error to all other threads in
-                           // case thread 0 has encountered an error
 
   residual_cache_t<Overflow> residual_cache;
   residual_cache.inverse_sigma_squared =
@@ -270,8 +265,8 @@ fit_line_impl(struct Data *data, const int thread_data_index, int bucket_index,
     }
   }
 
-  for (iteration = 0; iteration < 1000; iteration++) {
-    line_t line;
+  line_t line;
+  for (iteration = 0; iteration < NEWTON_RAPHSON_MAX_ITER; iteration++) {
 
     // Update line and compute derivatives
     lineMath::create_line(params[X0], params[Y0], params[PHI], params[THETA],
@@ -291,45 +286,33 @@ fit_line_impl(struct Data *data, const int thread_data_index, int bucket_index,
     Matrix4 hessian = residualMath::get_hessian<Overflow>(
         bucket_tile, num_measurements, residual_cache);
 
-    Matrix4 inverse_hessian;
-    if (!matrixMath::invert_4x4(bucket_tile, hessian, inverse_hessian)) {
+    // In place inversion of hessian
+    if (!matrixMath::invert_4x4(bucket_tile, hessian)) {
       if (bucket_tile.thread_rank() == 16) {
         printf("Singular hessian at iteration %d\n", iteration);
         printf("Bucket index: %d\n", bucket_index);
       }
-      error_flag = true; // Set error flag to indicate failure
+      iteration = NEWTON_RAPHSON_MAX_ITER; // Force exit
     }
 
-    // Broadcast error flag
-    bucket_tile.sync();
-    error_flag = bucket_tile.shfl(error_flag, 0);
-    if (error_flag) {
-      break; // Exit loop on error and dont update parameters
-    }
-
-    real_t delta_params_norm; // To check for early stopping
     if (bucket_tile.thread_rank() == 0) {
-
-      Vector4 delta_params = -inverse_hessian * gradient;
-      delta_params_norm = delta_params.norm();
+      Vector4 delta_params = -hessian * gradient;
+      float delta_params_norm = delta_params.norm();
       params += delta_params;
-    }
 
-    // Broadcast delta parameters norm
-    bucket_tile.sync();
-    delta_params_norm = bucket_tile.shfl(delta_params_norm, 0);
-
-    // Check for convergence
-    if (delta_params_norm < 1e-8) {
-      if (bucket_tile.thread_rank() == 0) {
+      // Early stopping criterion
+      if (delta_params_norm < 1e-6) {
+        iteration = NEWTON_RAPHSON_MAX_ITER; // Force exit
 #ifdef VERBOSE
         printf("Converged in %d iterations. delta_param norm: %.15f\n",
                iteration, delta_params_norm);
 #endif
       }
-
-      break; // Convergence condition
     }
+
+    // Broadcast error flag
+    bucket_tile.sync();
+    iteration = bucket_tile.shfl(iteration, 0);
 
 // Broadcast updated parameters
 #pragma unroll
@@ -357,10 +340,10 @@ fit_line_impl(struct Data *data, const int thread_data_index, int bucket_index,
 // ============================================================================
 
 template <bool Overflow>
-__device__ __forceinline__ void
-execute_work(WorkType work_type, Data *data, const int thread_data_index,
-             int bucket_index, int bucket_start, int rpc_start, int bucket_end,
-             cg::thread_block_tile<TILE_SIZE> &bucket_tile) {
+__device__ void execute_work(WorkType work_type, Data *data,
+                             const int thread_data_index, int bucket_index,
+                             int bucket_start, int rpc_start, int bucket_end,
+                             cg::thread_block_tile<TILE_SIZE> &bucket_tile) {
 
   switch (work_type) {
   case WorkType::SEED_LINE:
@@ -381,9 +364,8 @@ execute_work(WorkType work_type, Data *data, const int thread_data_index,
 // Main Work Partitioning Function
 // ============================================================================
 
-__device__ __forceinline__ void partition_and_execute_work(struct Data *data,
-                                                           int num_buckets,
-                                                           WorkType work_type) {
+__device__ void partition_and_execute_work(struct Data *data, int num_buckets,
+                                           WorkType work_type) {
   const unsigned int global_thread_id = blockIdx.x * blockDim.x + threadIdx.x;
   const int primary_bucket = global_thread_id / TILE_SIZE;
   const int secondary_bucket =
