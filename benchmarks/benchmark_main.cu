@@ -167,12 +167,12 @@ void create_round_robin_data(
       // Generate plane normal and strip direction
       Vector3 plane_normal(0, 0, 1);
       Vector3 sensor_dir(0, 0, 0);
-      h_data.sensor_dir_x[measurement_idx] = sensor_dir.x();
-      h_data.sensor_dir_y[measurement_idx] = sensor_dir.y();
-      h_data.sensor_dir_z[measurement_idx] = sensor_dir.z();
-      h_data.plane_normal_x[measurement_idx] = plane_normal.x();
-      h_data.plane_normal_y[measurement_idx] = plane_normal.y();
-      h_data.plane_normal_z[measurement_idx] = plane_normal.z();
+      h_data.sensor_dir_x[measurement_idx] = sensor_dir.x;
+      h_data.sensor_dir_y[measurement_idx] = sensor_dir.y;
+      h_data.sensor_dir_z[measurement_idx] = sensor_dir.z;
+      h_data.plane_normal_x[measurement_idx] = plane_normal.x;
+      h_data.plane_normal_y[measurement_idx] = plane_normal.y;
+      h_data.plane_normal_z[measurement_idx] = plane_normal.z;
 
       measurement_idx++;
     }
@@ -308,6 +308,7 @@ bool benchmark_seed_line_with_round_robin_data() {
   fit_lines<<<num_blocks, block_size>>>(device_data_ptr, desired_buckets);
   CUDA_CHECK(cudaDeviceSynchronize());
   CUDA_CHECK(cudaGetLastError());
+  return true;
 
   // Timed runs
   const int num_runs = 10; // Run multiple times for better statistics

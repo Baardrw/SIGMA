@@ -220,12 +220,12 @@ void populate_h_data(Data &h_data,
       // Generate plane normal and strip direction
       Vector3 plane_normal(0, 0, 1);
       Vector3 sensor_dir(1, 0, 0);
-      h_data.sensor_dir_x[measurement_idx] = sensor_dir.x();
-      h_data.sensor_dir_y[measurement_idx] = sensor_dir.y();
-      h_data.sensor_dir_z[measurement_idx] = sensor_dir.z();
-      h_data.plane_normal_x[measurement_idx] = plane_normal.x();
-      h_data.plane_normal_y[measurement_idx] = plane_normal.y();
-      h_data.plane_normal_z[measurement_idx] = plane_normal.z();
+      h_data.sensor_dir_x[measurement_idx] = sensor_dir.x;
+      h_data.sensor_dir_y[measurement_idx] = sensor_dir.y;
+      h_data.sensor_dir_z[measurement_idx] = sensor_dir.z;
+      h_data.plane_normal_x[measurement_idx] = plane_normal.x;
+      h_data.plane_normal_y[measurement_idx] = plane_normal.y;
+      h_data.plane_normal_z[measurement_idx] = plane_normal.z;
 
       measurement_idx++;
     }

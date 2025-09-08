@@ -1,7 +1,17 @@
 #include "config.h"
+#include "data_structures.h"
 #include "matrix_math.h"
 
 namespace matrixMath {
+
+__device__ Vector4 matrix_vector_mult(Matrix4 mat, Vector4 vec) {
+  Vector4 result;
+  for (int i = 0; i < 4; ++i) {
+    result[i] = mat(i, 0) * vec[0] + mat(i, 1) * vec[1] + mat(i, 2) * vec[2] +
+                mat(i, 3) * vec[3];
+  }
+  return result;
+}
 
 __device__ bool invert_2x2(const Matrix2 &input, Matrix2 &output) {
   float det = input.determinant();

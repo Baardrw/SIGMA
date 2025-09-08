@@ -308,10 +308,13 @@ fit_line_impl(struct Data *data, const int thread_data_index, int bucket_index,
     }
 
     real_t delta_params_norm; // To check for early stopping
-    if (bucket_tile.thread_rank() == 0) {
 
-      Vector4 delta_params = -inverse_hessian * gradient;
+    // Only valid on thread0
+    Vector4 delta_params = matrixMath::matrix_vector_mult(-inverse_hessian, gradient);
+
+    if (bucket_tile.thread_rank() == 0) {
       delta_params_norm = delta_params.norm();
+
       params += delta_params;
     }
 

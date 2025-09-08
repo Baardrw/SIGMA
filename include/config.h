@@ -11,10 +11,8 @@
   32 // Amount of threads needed to handle overflowing buckets
 
 typedef double real_t;
+typedef double3 real_t3;
 
-using Vector2 = Eigen::Vector2d;
-using Vector3 = Eigen::Vector3d;
-using Vector4 = Eigen::Vector4d;
 using Matrix2 = Eigen::Matrix2d;
 using Matrix3 = Eigen::Matrix3d;
 using Matrix4 = Eigen::Matrix4d;
