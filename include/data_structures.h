@@ -9,8 +9,6 @@
 #define GET_X0(line) (line.params[2])
 #define GET_Y0(line) (line.params[3])
 
-#define MDT_DIR Vector3(1.0f, 0.0f, 0.0f) // Default wire direction
-
 #define EIGEN_VEC3(data, prefix, i)                                            \
   Vector3((data)->prefix##_x[i], (data)->prefix##_y[i], (data)->prefix##_z[i])
 

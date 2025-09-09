@@ -2,13 +2,15 @@
 #include "data_structures.h"
 #include "line_math.h"
 
+
+
 namespace lineMath {
 
 // Helper function to compute D_ortho components
-inline __host__ __device__ void
-compute_D_ortho_components(const line_t &line, Vector3 &Dw,
-                           real_t &norm_Dw, Vector3 &D_ortho) {
-  Dw = line.D - line.D[0] * MDT_DIR;
+inline __host__ __device__ void compute_D_ortho_components(const line_t &line,
+                                                  Vector3 &Dw, real_t &norm_Dw,
+                                                  Vector3 &D_ortho) {
+  Dw = line.D - line.D[0] * Vector3::UnitX();
   norm_Dw = Dw.norm();
   D_ortho = (1 / norm_Dw) * Dw;
 }
@@ -21,10 +23,8 @@ __host__ __device__ void compute_D_ortho(line_t &line) {
   line.D_ortho = D_ortho;
 }
 
-inline __host__ __device__ Vector3 get_delta_D_ortho(const line_t &line,
-                                                     int param_idx,
-                                                     Vector3 D_ortho,
-                                                     real_t norm_Dw) {
+inline __host__ __device__ Vector3 get_delta_D_ortho(const line_t &line, int param_idx,
+                                            Vector3 D_ortho, real_t norm_Dw) {
   // Get gradient for the parameter
   Vector3 dD =
       line.dD[param_idx]; // Assuming param_idx is 0 for THETA, 1 for PHI
@@ -33,17 +33,15 @@ inline __host__ __device__ Vector3 get_delta_D_ortho(const line_t &line,
   real_t D_dot_W = line.D[0];
   real_t norm_Dw_squared = norm_Dw * norm_Dw;
 
-  Vector3 term1 = (dD - dD_dot_W * MDT_DIR) * (1 / norm_Dw);
+  Vector3 term1 = (dD - dD_dot_W * Vector3::UnitX()) * (1 / norm_Dw);
   Vector3 term2 = (dD_dot_W * D_dot_W) / norm_Dw_squared * D_ortho;
 
   return term1 - term2;
 }
 
 // get_dd_D_ortho implementation
-inline __host__ __device__ Vector3 get_dd_D_ortho(const line_t &line,
-                                                  int param1_idx,
-                                                  int param2_idx,
-                                                  real_t norm_Dw) {
+inline __host__ __device__ Vector3 get_dd_D_ortho(const line_t &line, int param1_idx,
+                                         int param2_idx, real_t norm_Dw) {
   // Get second derivative
   int dd_idx;
   if (param1_idx == THETA && param2_idx == THETA) {
@@ -75,21 +73,21 @@ inline __host__ __device__ Vector3 get_dd_D_ortho(const line_t &line,
   // Get delta_D_ortho for param1 and param2
 
   // Compute the 5 terms
-  Vector3 t1 = (dd_D - dd_D_dot_W * MDT_DIR) * (1 / norm_Dw);
+  Vector3 res = (dd_D - dd_D_dot_W * Vector3::UnitX()) * (1 / norm_Dw);
 
-  Vector3 t2 = (D_dot_W * delta_D2_dot_W) / norm_Dw_squared * delta_D_ortho_1;
+  res += (D_dot_W * delta_D2_dot_W) / norm_Dw_squared * delta_D_ortho_1;
 
-  Vector3 t3 = (D_dot_W * delta_D1_dot_W) / norm_Dw_squared * delta_D_ortho_2;
+  res += (D_dot_W * delta_D1_dot_W) / norm_Dw_squared * delta_D_ortho_2;
 
-  Vector3 t4 = (dd_D_dot_W * D_dot_W) / norm_Dw_squared * D_ortho;
+  res += (dd_D_dot_W * D_dot_W) / norm_Dw_squared * D_ortho;
 
-  Vector3 t5 = (delta_D1_dot_W * delta_D2_dot_W) / norm_Dw_squared * D_ortho;
+  res += (delta_D1_dot_W * delta_D2_dot_W) / norm_Dw_squared * D_ortho;
 
-  return t1 + t2 + t3 + t4 + t5;
+  return res;
 }
 
-__host__ __device__ void create_line(real_t x0, real_t y0, real_t phi,
-                                     real_t theta, line_t &line) {
+__host__ __device__ void create_line(real_t x0, real_t y0, real_t phi, real_t theta,
+                            line_t &line) {
   // // Initialize direction vector D
   line.D << sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta);
 
@@ -117,17 +115,12 @@ __host__ __device__ void update_derivatives(line_t &line, real_t theta, real_t p
   line.D_ortho = D_ortho;
 
   // Compute first derivatives of D_ortho
-  line.dD_ortho[THETA] =
-      get_delta_D_ortho(line, THETA, D_ortho, norm_Dw);
-  line.dD_ortho[PHI] =
-      get_delta_D_ortho(line, PHI, D_ortho, norm_Dw);
+  line.dD_ortho[THETA] = get_delta_D_ortho(line, THETA, D_ortho, norm_Dw);
+  line.dD_ortho[PHI] = get_delta_D_ortho(line, PHI, D_ortho, norm_Dw);
 
   // Compute second derivatives of D_ortho
-  line.ddD_ortho[DD_THETA_THETA] =
-      get_dd_D_ortho(line, THETA, THETA, norm_Dw);
-  line.ddD_ortho[DD_PHI_PHI] =
-      get_dd_D_ortho(line, PHI, PHI, norm_Dw);
-  line.ddD_ortho[DD_THETA_PHI] =
-      get_dd_D_ortho(line, THETA, PHI, norm_Dw);
+  line.ddD_ortho[DD_THETA_THETA] = get_dd_D_ortho(line, THETA, THETA, norm_Dw);
+  line.ddD_ortho[DD_PHI_PHI] = get_dd_D_ortho(line, PHI, PHI, norm_Dw);
+  line.ddD_ortho[DD_THETA_PHI] = get_dd_D_ortho(line, THETA, PHI, norm_Dw);
 }
 } // namespace lineMath

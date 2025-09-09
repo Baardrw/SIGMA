@@ -48,9 +48,9 @@ adjugate_inversion(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
   // ==== Matrix of minors ====
   Matrix3 minor_matrix;
 #pragma unroll
-  for (int i = 0; i < 3; ++i) {
-    for (int j = 0; j < 3; ++j) {
-      minor_matrix(i, j) = input_matrix(rows[i], cols[j]);
+  for (int col = 0; col < 3; ++col) {
+    for (int row = 0; row < 3; ++row) {
+      minor_matrix(row, col) = input_matrix(rows[row], cols[col]);
     }
   }
   real_t minor = minor_matrix.determinant();

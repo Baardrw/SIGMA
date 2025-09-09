@@ -5,10 +5,7 @@
 
 
 #define EPSILON 1e-6
-#define FULL_MASK 0xffffffff
 #define TILE_SIZE 16
-#define OVERFLOW_TILE_SIZE                                                     \
-  32 // Amount of threads needed to handle overflowing buckets
 
 typedef double real_t;
 

@@ -8,8 +8,8 @@
 using namespace cooperative_groups;
 namespace cg = cooperative_groups;
 
-extern __constant__ real_t dS0_const[2][3];
-#define GET_DS0(idx) Vector3(dS0_const[idx])
+extern __constant__ float dS0_const[2][3];
+#define GET_DS0(idx) Vector3(dS0_const[idx][0], dS0_const[idx][1], dS0_const[idx][2])
 
 namespace residualMath {
 
