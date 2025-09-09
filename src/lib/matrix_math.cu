@@ -3,6 +3,20 @@
 
 namespace matrixMath {
 
+__device__ static const int row_mapping[4][4][3] = {
+    {{1, 2, 3}, {1, 2, 3}, {1, 2, 3}, {1, 2, 3}}, // Exclude row 0
+    {{0, 2, 3}, {0, 2, 3}, {0, 2, 3}, {0, 2, 3}}, // Exclude row 1
+    {{0, 1, 3}, {0, 1, 3}, {0, 1, 3}, {0, 1, 3}}, // Exclude row 2
+    {{0, 1, 2}, {0, 1, 2}, {0, 1, 2}, {0, 1, 2}}  // Exclude row 3
+};
+
+__device__ static const int col_mapping[4][4][3] = {
+    {{1, 2, 3}, {0, 2, 3}, {0, 1, 3}, {0, 1, 2}}, // Row 0
+    {{1, 2, 3}, {0, 2, 3}, {0, 1, 3}, {0, 1, 2}}, // Row 1
+    {{1, 2, 3}, {0, 2, 3}, {0, 1, 3}, {0, 1, 2}}, // Row 2
+    {{1, 2, 3}, {0, 2, 3}, {0, 1, 3}, {0, 1, 2}}  // Row 3
+};
+
 __device__ bool invert_2x2(const Matrix2 &input, Matrix2 &output) {
   float det = input.determinant();
   if (fabsf(det) < 1e-7) {
@@ -28,19 +42,18 @@ adjugate_inversion(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
   int row = bucket_tile.thread_rank() / 4;
   int col = bucket_tile.thread_rank() % 4;
 
+  const int *rows = row_mapping[row][col];
+  const int *cols = col_mapping[row][col];
+
   // ==== Matrix of minors ====
-  real_t minor = 0.0f;
   Matrix3 minor_matrix;
-  for (int i = 0; i < 4; ++i) {
-    for (int j = 0; j < 4; ++j) {
-      if (i == row || j == col)
-        continue;
-      int minor_row = (i < row) ? i : i - 1;
-      int minor_col = (j < col) ? j : j - 1;
-      minor_matrix(minor_row, minor_col) = input_matrix(i, j);
+#pragma unroll
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      minor_matrix(i, j) = input_matrix(rows[i], cols[j]);
     }
   }
-  minor = minor_matrix.determinant();
+  real_t minor = minor_matrix.determinant();
 
   // ==== Cofactor matrix ====
   cofactor = ((row + col) % 2 == 0) ? minor : -minor;
@@ -66,18 +79,13 @@ adjugate_inversion(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
     }
   }
 
-  // ==== Adjugate and inversion - threads 0-15 only ====
-  real_t adjugate =
-      bucket_tile.shfl(cofactor, col * 4 + row); // ALL participate
+  real_t adjugate = bucket_tile.shfl(cofactor, col * 4 + row);
   inv_element = adjugate / det;
 
-// ==== Result collection - ALL threads participate ====
 #pragma unroll
   for (int i = 0; i < 16; ++i) {
     real_t shfl = bucket_tile.shfl(inv_element, i); // ALL participate
-    if (bucket_tile.thread_rank() == 0) {
-      input_matrix(i / 4, i % 4) = shfl;
-    }
+    input_matrix(i / 4, i % 4) = shfl;
   }
 
   // Broadcast success flag
@@ -89,7 +97,11 @@ adjugate_inversion(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
 __device__ bool invert_4x4(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
                            Matrix4 &input) {
 
-  input += Matrix4::Identity() * 1e-6;
+  input(0, 0) += 1e-6f; // Regularization
+  input(1, 1) += 1e-6f;
+  input(2, 2) += 1e-6f;
+  input(3, 3) += 1e-6f;
+
   bool status = adjugate_inversion(bucket_tile, input);
 
   return status;
