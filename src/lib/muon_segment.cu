@@ -25,6 +25,11 @@ enum class WorkType { SEED_LINE, FIT_LINE };
 __constant__ real_t rho_0_comb[4] = {1, -1, 1, -1};
 __constant__ real_t rho_1_comb[4] = {1, 1, -1, -1};
 
+__constant__ real_t dS0_const[2][3] = {
+    {1.0f, 0.0f, 0.0f}, // dS0/dx0
+    {0.0f, 1.0f, 0.0f}  // dS0/dy0
+};
+
 // ============================================================================
 // Utility Functions
 // ============================================================================
@@ -271,7 +276,7 @@ __device__ void fit_line_impl(struct Data *data, const int thread_data_index,
     // Update line and compute derivatives
     lineMath::create_line(params[X0], params[Y0], params[PHI], params[THETA],
                           line);
-    lineMath::update_derivatives(line);
+    lineMath::update_derivatives(line, params[THETA], params[PHI]);
     measurement_cache.connection_vector =
         measurement_cache.sensor_pos - line.S0;
 

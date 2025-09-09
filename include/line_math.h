@@ -31,5 +31,5 @@ __host__ __device__ void compute_D_ortho(line_t &line);
 __host__ __device__ void create_line(real_t x0, real_t y0, real_t phi,
                                      real_t theta, line_t &line);
 
-__host__ __device__ void update_derivatives(line_t &line);
+__host__ __device__ void update_derivatives(line_t &line, real_t theta, real_t phi);
 } // namespace lineMath

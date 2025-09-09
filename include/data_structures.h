@@ -85,16 +85,13 @@ enum {
   TIME = 2
 };
 
-typedef struct line {
-  real_t params[4]; // theta, phi, x0, y0
-
+typedef struct line {  
   Vector3 D;
   Vector3 dD[2];
   Vector3 ddD[3]; // theta theta, phi phi, theta phi
 
   Vector3 S0;
-  Vector3 dS0[2] = {{1, 0, 0}, {0, 1, 0}}; // x0, y0
-
+  
   Vector3 D_ortho;
   Vector3 dD_ortho[2];  // theta, phi
   Vector3 ddD_ortho[3]; // theta theta, phi phi, theta phi

@@ -19,6 +19,7 @@ CompileFlags:
     - -arch=*                           # Remove any arch variations
     - --relocatable-device-code*        # Remove long form of rdc
     - -gencode*                         # Remove gencode flags
-    - G
+    - -G
+    - --generate-line-info
 Index:
   Background: Build

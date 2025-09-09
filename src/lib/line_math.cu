@@ -90,22 +90,14 @@ inline __host__ __device__ Vector3 get_dd_D_ortho(const line_t &line,
 
 __host__ __device__ void create_line(real_t x0, real_t y0, real_t phi,
                                      real_t theta, line_t &line) {
-  // Initialize direction vector D
+  // // Initialize direction vector D
   line.D << sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta);
 
   // Initialize starting point S0
   line.S0 << x0, y0, 0.0;
-
-  // Store parameters
-  line.params[THETA] = theta;
-  line.params[PHI] = phi;
-  line.params[X0] = x0;
-  line.params[Y0] = y0;
 }
 
-__host__ __device__ void update_derivatives(line_t &line) {
-  real_t theta = GET_THETA(line);
-  real_t phi = GET_PHI(line);
+__host__ __device__ void update_derivatives(line_t &line, real_t theta, real_t phi) {
 
   // ====== Derivatives of D ======
   line.dD[THETA] << cos(theta) * cos(phi), cos(theta) * sin(phi), -sin(theta);

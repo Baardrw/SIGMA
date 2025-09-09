@@ -8,6 +8,9 @@
 using namespace cooperative_groups;
 namespace cg = cooperative_groups;
 
+extern __constant__ real_t dS0_const[2][3];
+#define GET_DS0(idx) Vector3(dS0_const[idx])
+
 namespace residualMath {
 
 // ================ Residuals ================
@@ -162,7 +165,7 @@ __device__ void compute_straw_residuals_and_derivatives(
 // ================ Delta Residual ===============
 #pragma unroll
   for (int i = X0; i <= Y0; i++) {
-    Vector3 delta_K = -line.dS0[i - X0];
+    Vector3 delta_K = - GET_DS0(i - X0);
     residual_cache.delta_residual[i][BENDING] +=
         yz_residual_sign * delta_K.cross(line.D_ortho)[0];
   }
@@ -228,7 +231,7 @@ __device__ void compute_strip_residuals_and_derivatives(
 #pragma unroll
   for (int i = X0; i <= Y0; i++) {
     Vector3 delta_Sm =
-        line.dS0[i - X0] - line.dS0[i - X0].dot(N) * inverse_N_dot_D * D;
+        GET_DS0(i - X0) -N[i-X0] * inverse_N_dot_D * D;
 
     delta_residual[i][BENDING] += (delta_Sm).dot(v2);
     delta_residual[i][NON_BENDING] += (delta_Sm).dot(v1);
