@@ -8,7 +8,7 @@ namespace lineMath {
 inline __host__ __device__ void
 compute_D_ortho_components(const line_t &line, Vector3 &Dw,
                            real_t &norm_Dw, Vector3 &D_ortho) {
-  Dw = line.D - line.D.dot(MDT_DIR) * MDT_DIR;
+  Dw = line.D - line.D[0] * MDT_DIR;
   norm_Dw = Dw.norm();
   D_ortho = (1 / norm_Dw) * Dw;
 }
@@ -29,8 +29,8 @@ inline __host__ __device__ Vector3 get_delta_D_ortho(const line_t &line,
   Vector3 dD =
       line.dD[param_idx]; // Assuming param_idx is 0 for THETA, 1 for PHI
 
-  real_t dD_dot_W = dD.dot(MDT_DIR);
-  real_t D_dot_W = line.D.dot(MDT_DIR);
+  real_t dD_dot_W = dD[0];
+  real_t D_dot_W = line.D[0];
   real_t norm_Dw_squared = norm_Dw * norm_Dw;
 
   Vector3 term1 = (dD - dD_dot_W * MDT_DIR) * (1 / norm_Dw);
@@ -66,10 +66,10 @@ inline __host__ __device__ Vector3 get_dd_D_ortho(const line_t &line,
   Vector3 delta_D_ortho_2 = line.dD_ortho[param2_idx];
 
   // Precompute common terms
-  real_t D_dot_W = line.D.dot(MDT_DIR);
-  real_t delta_D1_dot_W = delta_D1.dot(MDT_DIR);
-  real_t delta_D2_dot_W = delta_D2.dot(MDT_DIR);
-  real_t dd_D_dot_W = dd_D.dot(MDT_DIR);
+  real_t D_dot_W = line.D[0];
+  real_t delta_D1_dot_W = delta_D1[0];
+  real_t delta_D2_dot_W = delta_D2[0];
+  real_t dd_D_dot_W = dd_D[0];
   real_t norm_Dw_squared = norm_Dw * norm_Dw;
 
   // Get delta_D_ortho for param1 and param2
