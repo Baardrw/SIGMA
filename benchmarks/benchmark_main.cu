@@ -1,4 +1,6 @@
-#include <Eigen/Dense>
+#define EIGEN_DONT_VECTORIZE
+#define EIGEN_DISABLE_UNALIGNED_ARRAY_ASSERT
+#include <Eigen/Core>
 #include <cassert>
 #include <chrono>
 #include <clocale>

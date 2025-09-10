@@ -257,8 +257,6 @@ __device__ void compute_strip_residuals_and_derivatives(
   // For non cross terms
 #pragma unroll
   for (int i = THETA; i <= PHI; i++) {
-    int delta_1, delta_2;
-
     Vector3 delta_Sm =
         traveled_distance *
             (line.ddD[i] - (N.dot(line.ddD[i]) * inverse_N_dot_D) * D) -
@@ -481,7 +479,7 @@ should_compute_rpc<true>(const int tid, const int num_mdt_measurements,
 
 template __device__ bool
 should_compute_rpc<false>(const int tid, const int num_mdt_measurements,
-                         const int num_rpc_measurements);
+                          const int num_rpc_measurements);
 
 // get_chi2 instantiations
 template __device__ real_t

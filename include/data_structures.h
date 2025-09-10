@@ -1,6 +1,8 @@
 #pragma once
-#include <Eigen/Dense>
 
+#define EIGEN_DONT_VECTORIZE
+#define EIGEN_DISABLE_UNALIGNED_ARRAY_ASSERT
+#include <Eigen/Core>
 #include "config.h"
 
 // Accessors
@@ -139,7 +141,7 @@ typedef struct line {
     for (int i = DD_THETA_THETA; i <= DD_THETA_PHI; i++) {
       real_t dd_D_dot_W = ddD[i][0];
       ddD[i] = (ddD[i] - Vector3(dd_D_dot_W, 0, 0)) * (1 / norm_Dw);
-      ddD[i] += (dd_D_dot_W * D_dot_W) / norm_Dw_squared * D;
+      ddD[i] += (dd_D_dot_W * D_dot_W) * (1 / norm_Dw_squared) * D;
     }
 
 // Add the non cross terms
