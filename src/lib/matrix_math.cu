@@ -3,14 +3,14 @@
 
 namespace matrixMath {
 
-__device__ static const int row_mapping[4][4][3] = {
+__constant__ int row_mapping[4][4][3] = {
     {{1, 2, 3}, {1, 2, 3}, {1, 2, 3}, {1, 2, 3}}, // Exclude row 0
     {{0, 2, 3}, {0, 2, 3}, {0, 2, 3}, {0, 2, 3}}, // Exclude row 1
     {{0, 1, 3}, {0, 1, 3}, {0, 1, 3}, {0, 1, 3}}, // Exclude row 2
     {{0, 1, 2}, {0, 1, 2}, {0, 1, 2}, {0, 1, 2}}  // Exclude row 3
 };
 
-__device__ static const int col_mapping[4][4][3] = {
+__constant__ int col_mapping[4][4][3] = {
     {{1, 2, 3}, {0, 2, 3}, {0, 1, 3}, {0, 1, 2}}, // Row 0
     {{1, 2, 3}, {0, 2, 3}, {0, 1, 3}, {0, 1, 2}}, // Row 1
     {{1, 2, 3}, {0, 2, 3}, {0, 1, 3}, {0, 1, 2}}, // Row 2
