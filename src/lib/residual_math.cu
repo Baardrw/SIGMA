@@ -9,7 +9,8 @@ using namespace cooperative_groups;
 namespace cg = cooperative_groups;
 
 extern __constant__ float dS0_const[2][3];
-#define GET_DS0(idx) Vector3(dS0_const[idx][0], dS0_const[idx][1], dS0_const[idx][2])
+#define GET_DS0(idx)                                                           \
+  Vector3(dS0_const[idx][0], dS0_const[idx][1], dS0_const[idx][2])
 
 namespace residualMath {
 
@@ -24,10 +25,10 @@ compute_residuals(line_t &line, measurement_cache_t<false> *measurement_cache,
   Vector3 W(1, 0, 0);
 
   for (int i = 0; i < num_mdt_measurements; i++) {
-    Vector3 K = measurement_cache[i].connection_vector;
+    Vector3 K = measurement_cache[i].sensor_pos - line.S0;
     real_t drift_radius = measurement_cache[i].drift_radius;
 
-    real_t cross_product = K.cross(line.D_ortho).dot(W);
+    real_t cross_product = K.cross(line.get_D_ortho()).dot(W);
     residuals.push_back(Vector3(abs(cross_product) - drift_radius, 0.0f, 0.0f));
   }
 
@@ -56,7 +57,7 @@ template <bool Overflow>
 __device__ void
 compute_mdt_residuals(line_t &line, const Vector3 &K, real_t drift_radius,
                       residual_cache_t<Overflow> &residual_cache) {
-  real_t cross_product = K.cross(line.D_ortho)[0];
+  real_t cross_product = K.cross(line.get_D_ortho())[0];
   residual_cache.residual[0] += abs(cross_product) - drift_radius;
 }
 
@@ -137,9 +138,9 @@ compute_residual(line_t &line, const int tid, const int num_mdt_measurements,
 
   // Compute MDT residuals for threads handling MDT measurements
   if (tid < num_mdt_measurements) {
-    compute_mdt_residuals<Overflow>(line, measurement_cache.connection_vector,
-                                    measurement_cache.drift_radius,
-                                    residual_cache);
+    compute_mdt_residuals<Overflow>(
+        line, measurement_cache.sensor_pos - line.S0,
+        measurement_cache.drift_radius, residual_cache);
   }
 
   if (should_compute_rpc<Overflow>(tid, num_mdt_measurements,
@@ -154,26 +155,26 @@ __device__ void compute_straw_residuals_and_derivatives(
     line_t &line, const measurement_cache_t<Overflow> &measurement_cache,
     residual_cache_t<Overflow> &residual_cache) {
   // Local vars
-  const Vector3 &K = measurement_cache.connection_vector;
+  const Vector3 &K = measurement_cache.sensor_pos - line.S0;
   const real_t drift_radius = measurement_cache.drift_radius;
 
   // ================ Residual ================
-  real_t cross_product = K.cross(line.D_ortho)[0];
+  real_t cross_product = K.cross(line.D)[0];
   residual_cache.residual[BENDING] += abs(cross_product) - drift_radius;
   real_t yz_residual_sign = (cross_product < 0.0f) ? -1.0f : 1.0f;
 
 // ================ Delta Residual ===============
 #pragma unroll
   for (int i = X0; i <= Y0; i++) {
-    Vector3 delta_K = - GET_DS0(i - X0);
+    Vector3 delta_K = -GET_DS0(i - X0);
     residual_cache.delta_residual[i][BENDING] +=
-        yz_residual_sign * delta_K.cross(line.D_ortho)[0];
+        yz_residual_sign * delta_K.cross(line.D)[0];
   }
 
 #pragma unroll
   for (int i = THETA; i <= PHI; i++) {
     residual_cache.delta_residual[i][BENDING] +=
-        yz_residual_sign * K.cross(line.dD_ortho[i])[0];
+        yz_residual_sign * K.cross(line.dD[i])[0];
   }
 
   // ================ Delta Delta Residual ===============
@@ -181,7 +182,7 @@ __device__ void compute_straw_residuals_and_derivatives(
   for (int i = DD_THETA_THETA; i <= DD_THETA_PHI; i++) {
     // Compute the delta delta residuals
     residual_cache.dd_residual[i][BENDING] +=
-        yz_residual_sign * K.cross(line.ddD_ortho[i])[0];
+        yz_residual_sign * K.cross(line.ddD[i])[0];
   }
 }
 
@@ -230,8 +231,7 @@ __device__ void compute_strip_residuals_and_derivatives(
   // ================ Delta Residual ===============
 #pragma unroll
   for (int i = X0; i <= Y0; i++) {
-    Vector3 delta_Sm =
-        GET_DS0(i - X0) -N[i-X0] * inverse_N_dot_D * D;
+    Vector3 delta_Sm = GET_DS0(i - X0) - N[i - X0] * inverse_N_dot_D * D;
 
     delta_residual[i][BENDING] += (delta_Sm).dot(v2);
     delta_residual[i][NON_BENDING] += (delta_Sm).dot(v1);
@@ -254,63 +254,30 @@ __device__ void compute_strip_residuals_and_derivatives(
   }
 
   // ================ Delta Delta Residual ===============
+  // For non cross terms
 #pragma unroll
-  for (int i = DD_THETA_THETA; i <= DD_THETA_PHI; i++) {
+  for (int i = THETA; i <= PHI; i++) {
     int delta_1, delta_2;
-    GET_DELTA_VECTORS(i, line, delta_1, delta_2);
-    Vector3 delta_D1 = line.dD[delta_1];
-    Vector3 delta_D2 = line.dD[delta_2];
 
     Vector3 delta_Sm =
         traveled_distance *
             (line.ddD[i] - (N.dot(line.ddD[i]) * inverse_N_dot_D) * D) -
-        N.dot(delta_D2) * inverse_N_dot_D * delta_SM[delta_1] -
-        N.dot(delta_D1) * inverse_N_dot_D * delta_SM[delta_2];
+        2 * N.dot(line.dD[i]) * inverse_N_dot_D * delta_SM[i];
 
     dd_residual[i][BENDING] += (delta_Sm).dot(v2);
     dd_residual[i][NON_BENDING] += (delta_Sm).dot(v1);
   }
-}
 
-template <bool Overflow>
-__device__ void
-update_residual_cache(line_t &line, const int tid,
-                      const int num_mdt_measurements,
-                      const int num_rpc_measurements,
-                      const measurement_cache_t<Overflow> &measurement_cache,
-                      residual_cache_t<Overflow> &residual_cache) {
+  // Cross Term
+  Vector3 delta_Sm =
+      traveled_distance *
+          (line.ddD[DD_THETA_PHI] -
+           (N.dot(line.ddD[DD_THETA_PHI]) * inverse_N_dot_D) * D) -
+      N.dot(line.dD[PHI]) * inverse_N_dot_D * delta_SM[THETA] -
+      N.dot(line.dD[THETA]) * inverse_N_dot_D * delta_SM[PHI];
 
-// Zero out the residual cache
-#pragma unroll
-  for (int i = 0; i < 3; i++) {
-    residual_cache.residual[i] = 0.0f;
-    residual_cache.dd_residual[i] = Vector3(0.0f, 0.0f, 0.0f);
-
-    if constexpr (Overflow) {
-      residual_cache.rpc_residual[i] = 0.0f;
-      residual_cache.rpc_dd_residual[i] = Vector3(0.0f, 0.0f, 0.0f);
-    }
-  }
-
-#pragma unroll
-  for (int i = 0; i < 4; i++) {
-    residual_cache.delta_residual[i] = Vector3(0.0f, 0.0f, 0.0f);
-
-    if constexpr (Overflow) {
-      residual_cache.rpc_delta_residual[i] = Vector3(0.0f, 0.0f, 0.0f);
-    }
-  }
-
-  if (tid < num_mdt_measurements) {
-    compute_straw_residuals_and_derivatives(line, measurement_cache,
-                                            residual_cache);
-  }
-
-  if (should_compute_rpc<Overflow>(tid, num_mdt_measurements,
-                                   num_rpc_measurements)) {
-    compute_strip_residuals_and_derivatives(line, measurement_cache,
-                                            residual_cache);
-  }
+  dd_residual[DD_THETA_PHI][BENDING] += (delta_Sm).dot(v2);
+  dd_residual[DD_THETA_PHI][NON_BENDING] += (delta_Sm).dot(v1);
 }
 
 __device__ real_t contract(const Vector3 &v1, const Vector3 &v2,
@@ -477,20 +444,6 @@ __device__ Matrix4 get_hessian(cg::thread_block_tile<TILE_SIZE> &bucket_tile,
   return hessian;
 }
 
-// update_residual_cache instantiations
-template __device__ void
-update_residual_cache<true>(line_t &line, const int tid,
-                            const int num_mdt_measurements,
-                            const int num_rpc_measurements,
-                            const measurement_cache_t<true> &measurement_cache,
-                            residual_cache_t<true> &residual_cache);
-
-template __device__ void update_residual_cache<false>(
-    line_t &line, const int tid, const int num_mdt_measurements,
-    const int num_rpc_measurements,
-    const measurement_cache_t<false> &measurement_cache,
-    residual_cache_t<false> &residual_cache);
-
 // compute_residual instantiations
 template __device__ void
 compute_residual<true>(line_t &line, const int tid,
@@ -505,6 +458,30 @@ compute_residual<false>(line_t &line, const int tid,
                         const int num_rpc_measurements,
                         const measurement_cache_t<false> &measurement_cache,
                         residual_cache_t<false> &residual_cache);
+
+template __device__ void compute_straw_residuals_and_derivatives<true>(
+    line_t &line, const measurement_cache_t<true> &measurement_cache,
+    residual_cache_t<true> &residual_cache);
+
+template __device__ void compute_straw_residuals_and_derivatives<false>(
+    line_t &line, const measurement_cache_t<false> &measurement_cache,
+    residual_cache_t<false> &residual_cache);
+
+template __device__ void compute_strip_residuals_and_derivatives<true>(
+    line_t &line, const measurement_cache_t<true> &measurement_cache,
+    residual_cache_t<true> &residual_cache);
+
+template __device__ void compute_strip_residuals_and_derivatives<false>(
+    line_t &line, const measurement_cache_t<false> &measurement_cache,
+    residual_cache_t<false> &residual_cache);
+
+template __device__ bool
+should_compute_rpc<true>(const int tid, const int num_mdt_measurements,
+                         const int num_rpc_measurements);
+
+template __device__ bool
+should_compute_rpc<false>(const int tid, const int num_mdt_measurements,
+                         const int num_rpc_measurements);
 
 // get_chi2 instantiations
 template __device__ real_t

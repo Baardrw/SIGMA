@@ -24,27 +24,29 @@ compute_residuals(line_t &line, measurement_cache_t<false> *measurement_cache,
  * is called to ensure that line.D_ortho is up to date.
  */
 template <bool Overflow>
-__device__ void compute_residual(line_t &line, const int tid,
-                                 const int num_mdt_measurements,
-                                 const int num_rpc_measurements,
-                                 const measurement_cache_t<Overflow> &measurement_cache,
-                                 residual_cache_t<Overflow> &residual_cache);
-
-/**
- * More optimized version of computing all the residuals in different functions,
- * avoids function calling overheads,
- * and allows to easier reuse computation results.
-
- * This function fills the residual_cache with all the residuals, delta
- residuals, and delta delta residuals
- */
-template <bool Overflow>
 __device__ void
-update_residual_cache(line_t &line, const int tid,
-                      const int num_mdt_measurements,
-                      const int num_rpc_measurements,
-                      const measurement_cache_t<Overflow> &measurement_cache,
-                      residual_cache_t<Overflow> &residual_cache);
+compute_residual(line_t &line, const int tid, const int num_mdt_measurements,
+                 const int num_rpc_measurements,
+                 const measurement_cache_t<Overflow> &measurement_cache,
+                 residual_cache_t<Overflow> &residual_cache);
+
+
+template <bool Overflow>
+__device__ void compute_straw_residuals_and_derivatives(
+    line_t &line, const measurement_cache_t<Overflow> &measurement_cache,
+    residual_cache_t<Overflow> &residual_cache);
+
+
+template <bool Overflow>
+__device__ void compute_strip_residuals_and_derivatives(
+    line_t &line, const measurement_cache_t<Overflow> &measurement_cache,
+    residual_cache_t<Overflow> &residual_cache);
+    
+
+template <bool Overflow>
+__device__ bool should_compute_rpc(const int tid,
+                                   const int num_mdt_measurements,
+                                   const int num_rpc_measurements);
 
 /**
  * Computes the gradient vector for the line via a shfl_down reduction

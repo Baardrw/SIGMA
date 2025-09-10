@@ -91,27 +91,28 @@ std::vector<real_t> calculate_chi2(Data &h_data, int num_buckets) {
 
     // Create line
     line_t line;
-    lineMath::create_line(x0, y0, phi, theta, line);
-    lineMath::compute_D_ortho(line);
+    line.update_line(x0, y0, phi, theta);
 
     measurement_cache_t<false> *measurement_cache =
         new measurement_cache_t<false>[end_idx - start_idx];
 
     // Get MDT measurements
     for (int j = start_idx; j < rpc_idx; j++) {
-      Vector3 K_j;
-      K_j << h_data.sensor_pos_x[j] - x0, h_data.sensor_pos_y[j] - y0,
-          h_data.sensor_pos_z[j];
+      // Vector3 spos;
+      // spos << h_data.sensor_pos_x[j], h_data.sensor_pos_y[j],
+      //     h_data.sensor_pos_z[j];
 
-      measurement_cache[j - start_idx].connection_vector = K_j;
       measurement_cache[j - start_idx].drift_radius = h_data.drift_radius[j];
+      measurement_cache[j - start_idx].sensor_pos << h_data.sensor_pos_x[j],
+          h_data.sensor_pos_y[j], h_data.sensor_pos_z[j];
     }
 
     // get inverse sigma squared
     for (int j = start_idx; j < end_idx; j++) {
-      inverse_sigma_squared.push_back(Vector3(1/ h_data.sigma_x[j] / h_data.sigma_x[j],
-                                               1/ h_data.sigma_y[j] / h_data.sigma_y[j],
-                                               1/ h_data.sigma_z[j] / h_data.sigma_z[j]));
+      inverse_sigma_squared.push_back(
+          Vector3(1 / h_data.sigma_x[j] / h_data.sigma_x[j],
+                  1 / h_data.sigma_y[j] / h_data.sigma_y[j],
+                  1 / h_data.sigma_z[j] / h_data.sigma_z[j]));
     }
 
     // Get RPC measurments

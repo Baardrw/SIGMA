@@ -88,7 +88,6 @@ load_measurement_cache(struct Data *data, const int thread_data_index,
     // Get sensor position
     // Initialize measurement cache
     measurement_cache.sensor_pos        = SENSOR_POS(data, thread_data_index);
-    measurement_cache.connection_vector = measurement_cache.sensor_pos - Vector3(x0, y0, 0.0f);
     measurement_cache.drift_radius      = DRIFT_RADIUS(data, thread_data_index);
     measurement_cache.sensor_direction  = SENSOR_DIRECTION(data, thread_data_index);
     measurement_cache.plane_normal      = PLANE_NORMAL(data, thread_data_index);
@@ -188,7 +187,6 @@ __device__ void seed_line_impl(struct Data *data, const int thread_data_index,
                                      num_mdt_measurements, measurement_cache);
 
     residual_cache_t<Overflow> residual_cache;
-    line_t line;
 
     residual_cache.inverse_sigma_squared =
         get_inverse_sigma_squared(thread_data_index, data);
@@ -202,11 +200,8 @@ __device__ void seed_line_impl(struct Data *data, const int thread_data_index,
       }
     }
 
-    lineMath::create_line(x0[j], y0[j], phi, theta[j], line);
-    lineMath::compute_D_ortho(line);
-
-    measurement_cache.connection_vector =
-        measurement_cache.sensor_pos - line.S0;
+    line_t line;
+    line.update_line(x0[j], y0[j], phi, theta[j]);
 
     residualMath::compute_residual<Overflow>(
         line, bucket_tile.thread_rank(), num_mdt_measurements,
@@ -248,7 +243,6 @@ __device__ void fit_line_impl(struct Data *data, const int thread_data_index,
 
   const int num_mdt_measurements = rpc_start - bucket_start;
   const int num_rpc_measurements = bucket_end - rpc_start;
-  const int num_measurements = num_mdt_measurements + num_rpc_measurements;
 
   // Construct measurement cache
   measurement_cache_t<Overflow> measurement_cache;
@@ -274,22 +268,69 @@ __device__ void fit_line_impl(struct Data *data, const int thread_data_index,
   for (iteration = 0; iteration < NEWTON_RAPHSON_MAX_ITER; iteration++) {
 
     // Update line and compute derivatives
-    lineMath::create_line(params[X0], params[Y0], params[PHI], params[THETA],
-                          line);
-    lineMath::update_derivatives(line, params[THETA], params[PHI]);
-    measurement_cache.connection_vector =
-        measurement_cache.sensor_pos - line.S0;
+    line.update_line(params[X0], params[Y0], params[PHI], params[THETA]);
+    line.update_derivatives(params[THETA], params[PHI]);
 
-    residualMath::update_residual_cache<Overflow>(
-        line, bucket_tile.thread_rank(), num_mdt_measurements,
-        num_rpc_measurements, measurement_cache, residual_cache);
+    // Zero out the residual cache
+#pragma unroll
+    for (int i = 0; i < 3; i++) {
+      residual_cache.residual[i] = 0.0f;
+      residual_cache.dd_residual[i] = Vector3(0.0f, 0.0f, 0.0f);
+
+      if constexpr (Overflow) {
+        residual_cache.rpc_residual[i] = 0.0f;
+        residual_cache.rpc_dd_residual[i] = Vector3(0.0f, 0.0f, 0.0f);
+      }
+    }
+
+#pragma unroll
+    for (int i = 0; i < 4; i++) {
+      residual_cache.delta_residual[i] = Vector3(0.0f, 0.0f, 0.0f);
+
+      if constexpr (Overflow) {
+        residual_cache.rpc_delta_residual[i] = Vector3(0.0f, 0.0f, 0.0f);
+      }
+    }
+
+    if (residualMath::should_compute_rpc<Overflow>(bucket_tile.thread_rank(),
+                                                   num_mdt_measurements,
+                                                   num_rpc_measurements)) {
+      residualMath::compute_strip_residuals_and_derivatives(
+          line, measurement_cache, residual_cache);
+    }
+
+    line.swap_to_Dortho();
+
+    if (bucket_tile.thread_rank() < num_mdt_measurements) {
+      residualMath::compute_straw_residuals_and_derivatives<Overflow>(
+          line, measurement_cache, residual_cache);
+    }
 
     // Get gradient and hessian
+    int num_measurements = num_mdt_measurements + num_rpc_measurements;
     Vector4 gradient = residualMath::get_gradient<Overflow>(
         bucket_tile, num_measurements, residual_cache);
 
+    // if (threadIdx.x == 16) {
+    //   // Debug print gradient
+    // printf("Gradient: dtheta: %.6f, dphi: %.6f, dx0: %.6f, dy0: %.6f\n",
+    //        gradient[THETA], gradient[PHI], gradient[X0], gradient[Y0]);
+    // }
+
     Matrix4 hessian = residualMath::get_hessian<Overflow>(
         bucket_tile, num_measurements, residual_cache);
+
+    // if (threadIdx.x == 16) {
+    //   // Debug print hessian
+    //   printf("Hessian:\n");
+    //   for (int i = 0; i < 4; i++) {
+    //     for (int j = 0; j < 4; j++) {
+    //       printf("%.6f ", hessian(i, j));
+    //     }
+    //     printf("\n");
+    //   }
+    // } 
+
 
     // In place inversion of hessian
     if (!matrixMath::invert_4x4(bucket_tile, hessian)) {
